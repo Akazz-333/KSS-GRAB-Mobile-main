@@ -81,7 +81,7 @@ const safeParseItems = (raw: any): any[] => {
     try {
       const p = JSON.parse(raw);
       if (Array.isArray(p)) return p;
-    } catch {}
+    } catch { }
   }
   return [];
 };
@@ -300,7 +300,7 @@ export default function AdminPortalScreen({ initialTab }: { initialTab?: string 
       if (Array.isArray(ordersRes)) {
         setOrders(ordersRes);
         if (ordersRes.length === 0) {
-          await removeItem('grabit_orders').catch(() => {});
+          await removeItem('grabit_orders').catch(() => { });
         }
       }
 
@@ -415,7 +415,7 @@ export default function AdminPortalScreen({ initialTab }: { initialTab?: string 
         setRiderAttendanceData(res);
         return;
       }
-    } catch {}
+    } catch { }
 
     // Fallback data generator for seamless UI parity
     const [y, m] = month.split('-').map(Number);
@@ -521,7 +521,7 @@ export default function AdminPortalScreen({ initialTab }: { initialTab?: string 
     };
     try {
       await post('/admin/fleet/global-leave', newLeave);
-    } catch {}
+    } catch { }
     setGlobalFleetLeaves((prev) => [newLeave, ...prev.filter((l) => l.date !== globalLeaveDate)]);
     setGlobalLeaveDate('');
     setGlobalLeaveNote('');
@@ -531,7 +531,7 @@ export default function AdminPortalScreen({ initialTab }: { initialTab?: string 
   const handleDeleteGlobalFleetLeave = async (dateStr: string) => {
     try {
       await del(`/admin/fleet/global-leave/${dateStr}`);
-    } catch {}
+    } catch { }
     setGlobalFleetLeaves((prev) => prev.filter((l) => l.date !== dateStr));
     showToast('Fleet holiday removed', 'success');
   };
@@ -546,7 +546,7 @@ export default function AdminPortalScreen({ initialTab }: { initialTab?: string 
         action,
         rejection_reason: rejectionReason || undefined,
       });
-    } catch {}
+    } catch { }
 
     setRiderDocs((prev: any) => ({
       ...prev,
@@ -613,7 +613,7 @@ export default function AdminPortalScreen({ initialTab }: { initialTab?: string 
 
     try {
       await post('/users/', payload);
-    } catch {}
+    } catch { }
     setPartners((prev) => [payload, ...prev]);
     setShowAddPartnerModal(false);
     setNewPartnerName('');
@@ -626,7 +626,7 @@ export default function AdminPortalScreen({ initialTab }: { initialTab?: string 
     const pid = partner.id || partner.phone;
     try {
       await del(`/users/${pid}`);
-    } catch {}
+    } catch { }
     setPartners((prev) => prev.filter((p) => (p.id || p.phone) !== pid));
     setPartnerToDeactivate(null);
     showToast('Partner deactivated successfully', 'success');
@@ -676,7 +676,7 @@ export default function AdminPortalScreen({ initialTab }: { initialTab?: string 
 
     try {
       await patch(`/products/${targetId}`, updated);
-    } catch {}
+    } catch { }
 
     setProducts((prev) =>
       prev.map((p) => (p.id === targetId ? { ...p, ...updated } : p))
@@ -694,7 +694,7 @@ export default function AdminPortalScreen({ initialTab }: { initialTab?: string 
         onPress: async () => {
           try {
             await del(`/products/${id}`);
-          } catch {}
+          } catch { }
           setProducts((prev) => prev.filter((p) => p.id !== id));
           showToast(`"${name}" deleted`, 'success');
         },
@@ -725,16 +725,16 @@ export default function AdminPortalScreen({ initialTab }: { initialTab?: string 
         statusFilter === 'ALL'
           ? true
           : statusFilter === 'PLACED'
-          ? st === 'placed'
-          : statusFilter === 'PREPARING'
-          ? st === 'preparing' || st === 'confirmed'
-          : statusFilter === 'READY'
-          ? st === 'ready' || st === 'ready_for_pickup'
-          : statusFilter === 'DELIVERING'
-          ? st === 'out_for_delivery' || st === 'delivering'
-          : statusFilter === 'DELIVERED'
-          ? st === 'delivered'
-          : true;
+            ? st === 'placed'
+            : statusFilter === 'PREPARING'
+              ? st === 'preparing' || st === 'confirmed'
+              : statusFilter === 'READY'
+                ? st === 'ready' || st === 'ready_for_pickup'
+                : statusFilter === 'DELIVERING'
+                  ? st === 'out_for_delivery' || st === 'delivering'
+                  : statusFilter === 'DELIVERED'
+                    ? st === 'delivered'
+                    : true;
 
       return matchSearch && matchStatus;
     });
@@ -1464,9 +1464,9 @@ export default function AdminPortalScreen({ initialTab }: { initialTab?: string 
           const onlineActiveCount = filteredRiders.filter((r) =>
             Boolean(
               r.is_online ||
-                r.agent_status === 'AVAILABLE' ||
-                r.agent_status === 'ON_DELIVERY' ||
-                String(r.presence_status || r.status || '').toUpperCase() === 'PRESENT'
+              r.agent_status === 'AVAILABLE' ||
+              r.agent_status === 'ON_DELIVERY' ||
+              String(r.presence_status || r.status || '').toUpperCase() === 'PRESENT'
             )
           ).length;
 
@@ -1883,22 +1883,22 @@ export default function AdminPortalScreen({ initialTab }: { initialTab?: string 
                               {renderDocMiniBadge(
                                 'DL',
                                 p.document_statuses?.driving_license ||
-                                  (p.verification_status === 'ADMIN_VERIFIED' || p.partnerVerified ? 'VERIFIED' : 'NOT_SUBMITTED')
+                                (p.verification_status === 'ADMIN_VERIFIED' || p.partnerVerified ? 'VERIFIED' : 'NOT_SUBMITTED')
                               )}
                               {renderDocMiniBadge(
                                 'INS',
                                 p.document_statuses?.insurance ||
-                                  (p.verification_status === 'ADMIN_VERIFIED' || p.partnerVerified ? 'VERIFIED' : 'NOT_SUBMITTED')
+                                (p.verification_status === 'ADMIN_VERIFIED' || p.partnerVerified ? 'VERIFIED' : 'NOT_SUBMITTED')
                               )}
                               {renderDocMiniBadge(
                                 'PUC',
                                 p.document_statuses?.puc ||
-                                  (p.verification_status === 'ADMIN_VERIFIED' || p.partnerVerified ? 'VERIFIED' : 'NOT_SUBMITTED')
+                                (p.verification_status === 'ADMIN_VERIFIED' || p.partnerVerified ? 'VERIFIED' : 'NOT_SUBMITTED')
                               )}
                               {renderDocMiniBadge(
                                 'BG',
                                 p.document_statuses?.background_check ||
-                                  (p.verification_status === 'ADMIN_VERIFIED' || p.partnerVerified ? 'VERIFIED' : 'NOT_SUBMITTED')
+                                (p.verification_status === 'ADMIN_VERIFIED' || p.partnerVerified ? 'VERIFIED' : 'NOT_SUBMITTED')
                               )}
                             </View>
                           </Pressable>
@@ -2221,7 +2221,7 @@ export default function AdminPortalScreen({ initialTab }: { initialTab?: string 
                     lat: data.lat,
                     lng: data.lng,
                     geofence_radius_meters: data.radius,
-                  }).catch(() => {});
+                  }).catch(() => { });
                   showToast('Dispatch Center location updated!', 'success');
                 }}
               />
@@ -2247,7 +2247,7 @@ export default function AdminPortalScreen({ initialTab }: { initialTab?: string 
                     lat: data.lat,
                     lng: data.lng,
                     geofence_radius_meters: data.radius,
-                  }).catch(() => {});
+                  }).catch(() => { });
                   showToast('5km Coverage Geofence saved!', 'success');
                 }}
               />
@@ -2285,7 +2285,7 @@ export default function AdminPortalScreen({ initialTab }: { initialTab?: string 
                   post('/store/settings', {
                     opening_time: storeOpenTime,
                     closing_time: storeCloseTime,
-                  }).catch(() => {});
+                  }).catch(() => { });
                   showToast('Store operating hours updated!', 'success');
                 }}
               >

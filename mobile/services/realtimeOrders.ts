@@ -2,8 +2,8 @@
  * useRealtimeOrders — Real-time order data hook for delivery portals
  *
  * Strategy (Vercel-compatible, no WebSockets):
- *   • Web (Expo Web / Browser): Uses EventSource (SSE) for true push-based real-time updates
- *   • Native (iOS/Android):     Falls back to fast 3-second polling with cache bypass
+ *   • Web (Expo Web / Browser): Uses EventSource (SSE) for push-based updates
+ *   • Native (iOS/Android):     Falls back to fast 3-second interval polling without resetting loading spinners
  *
  * Usage:
  *   const { orders, loading, error, refresh, isLive } = useRealtimeOrders('seller');
@@ -28,112 +28,36 @@ const SSE_POLL_INTERVAL_MS = 3000;     // 3s polling on native
 const MAX_RECONNECT_DELAY_MS = 30000;  // max backoff cap
 
 function getOrdersEndpoint(role: RealtimeRole): string {
-  return role === 'rider' ? '/delivery/active' : '/orders';
+  if (role === 'rider') return '/delivery/active';
+  if (role === 'seller' || role === 'admin') return '/store/orders';
+  return '/orders';
 }
 
 function getSseEndpoint(role: RealtimeRole): string {
-  return role === 'rider' ? '/delivery/stream' : '/orders/stream';
+  if (role === 'rider') return '/delivery/stream';
+  if (role === 'seller' || role === 'admin') return '/orders/stream';
+  return '/orders/stream';
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Web SSE hook (EventSource)
-// ──────────────────────────────────────────────────────────────────────────────
-function useSSEOrders(role: RealtimeRole): UseRealtimeOrdersResult {
+export function useRealtimeOrders(role: RealtimeRole): UseRealtimeOrdersResult {
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isLive, setIsLive] = useState(false);
-  const esRef = useRef<EventSource | null>(null);
-  const retryCountRef = useRef(0);
-  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const connect = useCallback(() => {
-    if (esRef.current) {
-      esRef.current.close();
-    }
-
-    const baseUrl = getApiBaseUrl();
-    const sseUrl = `${baseUrl}${getSseEndpoint(role)}`;
-
-    try {
-      const es = new EventSource(sseUrl, { withCredentials: false });
-      esRef.current = es;
-
-      es.addEventListener('orders_update', (evt: MessageEvent) => {
-        try {
-          const data = JSON.parse(evt.data);
-          if (Array.isArray(data)) {
-            setOrders(data);
-            setLoading(false);
-            setError(null);
-            setIsLive(true);
-            retryCountRef.current = 0;
-          }
-        } catch {
-          // ignore parse errors
-        }
-      });
-
-      es.addEventListener('heartbeat', () => {
-        setIsLive(true);
-        setLoading(false);
-      });
-
-      es.addEventListener('error', () => {
-        setIsLive(false);
-        es.close();
-        esRef.current = null;
-
-        // Exponential backoff reconnect
-        const delay = Math.min(1000 * Math.pow(2, retryCountRef.current), MAX_RECONNECT_DELAY_MS);
-        retryCountRef.current++;
-        retryTimerRef.current = setTimeout(connect, delay);
-      });
-
-    } catch (e) {
-      setIsLive(false);
-      setLoading(false);
-      setError('SSE connection failed');
-    }
-  }, [role]);
-
-  // Initial connection + cleanup
-  useEffect(() => {
-    connect();
-    return () => {
-      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
-      if (esRef.current) {
-        esRef.current.close();
-        esRef.current = null;
-      }
-    };
-  }, [connect]);
-
-  const refresh = useCallback(() => {
-    invalidateOrdersCache();
-    if (esRef.current) {
-      esRef.current.close();
-      esRef.current = null;
-    }
-    retryCountRef.current = 0;
-    connect();
-  }, [connect]);
-
-  return { orders, loading, error, isLive, refresh };
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Native polling hook (3-second interval, cache-bypassed)
-// ──────────────────────────────────────────────────────────────────────────────
-function usePollingOrders(role: RealtimeRole): UseRealtimeOrdersResult {
-  const [orders, setOrders] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const mountedRef = useRef(true);
+  const esRef = useRef<any>(null);
+  const retryCountRef = useRef(0);
+  const retryTimerRef = useRef<any>(null);
+  const initialFetchDoneRef = useRef(false);
 
-  const fetchOrders = useCallback(async () => {
-    invalidateOrdersCache();
+  const isWeb = Platform.OS === 'web' && typeof EventSource !== 'undefined';
+
+  const fetchOrders = useCallback(async (isInitial = false) => {
     try {
+      if (isInitial && !initialFetchDoneRef.current) {
+        setLoading(true);
+      }
       const endpoint = getOrdersEndpoint(role);
       const res = await get(endpoint);
       if (!mountedRef.current) return;
@@ -145,7 +69,7 @@ function usePollingOrders(role: RealtimeRole): UseRealtimeOrdersResult {
         fetched = (res as any).orders;
       }
 
-      // Filter out terminal orders for rider
+      // Filter out terminal orders for rider view
       if (role === 'rider') {
         fetched = fetched.filter((o: any) => {
           const st = String(o.status || '').toLowerCase();
@@ -155,36 +79,121 @@ function usePollingOrders(role: RealtimeRole): UseRealtimeOrdersResult {
 
       setOrders(fetched);
       setError(null);
+      initialFetchDoneRef.current = true;
     } catch (e: any) {
       if (!mountedRef.current) return;
       setError(e?.message || 'Failed to fetch orders');
     } finally {
-      if (mountedRef.current) setLoading(false);
+      if (mountedRef.current && isInitial) {
+        setLoading(false);
+      }
     }
   }, [role]);
 
+  const connectSSE = useCallback(() => {
+    if (!isWeb) return;
+    if (esRef.current) {
+      esRef.current.close();
+    }
+
+    const baseUrl = getApiBaseUrl();
+    const sseUrl = `${baseUrl}${getSseEndpoint(role)}`;
+
+    try {
+      const es = new (window as any).EventSource(sseUrl, { withCredentials: false });
+      esRef.current = es;
+
+      es.addEventListener('orders_update', (evt: any) => {
+        try {
+          const data = JSON.parse(evt.data);
+          if (Array.isArray(data) && mountedRef.current) {
+            let processed = data;
+            if (role === 'rider') {
+              processed = data.filter((o: any) => {
+                const st = String(o.status || '').toLowerCase();
+                return st !== 'delivered' && st !== 'cancelled' && st !== 'failed_delivery';
+              });
+            }
+            setOrders(processed);
+            setLoading(false);
+            setError(null);
+            setIsLive(true);
+            retryCountRef.current = 0;
+          }
+        } catch {
+          // ignore parse errors
+        }
+      });
+
+      es.addEventListener('heartbeat', () => {
+        if (mountedRef.current) {
+          setIsLive(true);
+          setLoading(false);
+        }
+      });
+
+      es.addEventListener('error', () => {
+        if (!mountedRef.current) return;
+        setIsLive(false);
+        if (esRef.current) {
+          esRef.current.close();
+          esRef.current = null;
+        }
+
+        // Exponential backoff reconnect
+        const delay = Math.min(1000 * Math.pow(2, retryCountRef.current), MAX_RECONNECT_DELAY_MS);
+        retryCountRef.current++;
+        retryTimerRef.current = setTimeout(connectSSE, delay);
+      });
+
+    } catch {
+      if (mountedRef.current) {
+        setIsLive(false);
+        setLoading(false);
+      }
+    }
+  }, [role, isWeb]);
+
   useEffect(() => {
     mountedRef.current = true;
-    fetchOrders();
-    const interval = setInterval(fetchOrders, SSE_POLL_INTERVAL_MS);
+
+    if (isWeb) {
+      fetchOrders(true);
+      connectSSE();
+    } else {
+      fetchOrders(true);
+      const interval = setInterval(() => {
+        fetchOrders(false);
+      }, SSE_POLL_INTERVAL_MS);
+
+      return () => {
+        mountedRef.current = false;
+        clearInterval(interval);
+      };
+    }
+
     return () => {
       mountedRef.current = false;
-      clearInterval(interval);
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+      if (esRef.current) {
+        esRef.current.close();
+        esRef.current = null;
+      }
     };
-  }, [fetchOrders]);
+  }, [isWeb, fetchOrders, connectSSE]);
 
-  return { orders, loading, error, isLive: false, refresh: fetchOrders };
-}
+  const refresh = useCallback(() => {
+    invalidateOrdersCache();
+    if (isWeb) {
+      if (esRef.current) {
+        esRef.current.close();
+        esRef.current = null;
+      }
+      retryCountRef.current = 0;
+      connectSSE();
+    }
+    fetchOrders(false);
+  }, [isWeb, connectSSE, fetchOrders]);
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Unified hook — auto-selects SSE on web, polling on native
-// ──────────────────────────────────────────────────────────────────────────────
-export function useRealtimeOrders(role: RealtimeRole): UseRealtimeOrdersResult {
-  const isWeb = Platform.OS === 'web' && typeof EventSource !== 'undefined';
-
-  // Hooks must be called unconditionally — call both, use one
-  const sseResult = useSSEOrders(role);
-  const pollResult = usePollingOrders(role);
-
-  return isWeb ? sseResult : pollResult;
+  return { orders, loading, error, isLive, refresh };
 }

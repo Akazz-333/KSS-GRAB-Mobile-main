@@ -829,12 +829,28 @@ async def load_merged_order(order_id: str) -> dict | None:
         logging.warning(f"Cache get cloud:order:{order_id} failed: {err}")
 
     if not redis_order or not isinstance(redis_order, dict):
-        list_orders = await cache_get("cloud:orders_list") or []
-        if isinstance(list_orders, list):
-            for o in list_orders:
-                if is_same_order_id(o.get("id") or o.get("rawId"), order_id):
-                    redis_order = o
-                    break
+        try:
+            o_items_fb = load_orders_items()
+            clean_fb = str(order_id).strip()
+            fb_entry = (
+                o_items_fb.get(clean_fb)
+                or o_items_fb.get(clean_fb.replace("GB-", "").replace("gb-", ""))
+            )
+            if fb_entry and isinstance(fb_entry, dict):
+                if "order" in fb_entry and isinstance(fb_entry["order"], dict):
+                    redis_order = dict(fb_entry["order"])
+                else:
+                    redis_order = {
+                        "id": clean_fb,
+                        "status": fb_entry.get("status", "placed"),
+                        "customer_phone": fb_entry.get("customer_phone", ""),
+                        "items": fb_entry.get("items", []),
+                        "delivery_otp": fb_entry.get("delivery_otp"),
+                        "delivery_agent_id": fb_entry.get("delivery_agent_id"),
+                        "workflow_step": fb_entry.get("workflow_step"),
+                    }
+        except Exception:
+            pass
 
     real_id = await resolve_postgres_order_id(order_id)
     db_order = None
@@ -858,9 +874,16 @@ async def load_merged_order(order_id: str) -> dict | None:
         merged["total"] = db_order.get("total") if db_order.get("total") is not None else merged.get("total")
         if merged.get("total") is not None and "total_amount" not in merged:
             merged["total_amount"] = float(merged.get("total") or 0)
-        # Postgres wins for status and rider assignment
-        if db_order.get("status"):
+        
+        # Postgres wins for status unless Redis/memory has a newer terminal status
+        cached_status = str(merged.get("status") or "").lower()
+        db_status = str(db_order.get("status") or "").lower()
+        if cached_status in ("delivered", "cancelled") and db_status not in ("delivered", "cancelled"):
+            # In-memory/Redis has the immediate cancellation/delivery
+            pass
+        elif db_order.get("status"):
             merged["status"] = db_order["status"]
+
         if db_order.get("delivery_agent_id"):
             merged["delivery_agent_id"] = db_order["delivery_agent_id"]
         elif "delivery_agent_id" not in merged:
@@ -1568,10 +1591,12 @@ async def get_user_orders(
             o_items_map = load_orders_items()
             db_orders = []
             if cust_ids:
-                for cid in cust_ids:
-                    try:
+                try:
+                    valid_cids = [cid for cid in cust_ids if is_valid_uuid(cid)]
+                    if valid_cids:
+                        cid_filter = f"eq.{valid_cids[0]}" if len(valid_cids) == 1 else f"in.({','.join(valid_cids)})"
                         res = await store.get("orders", {
-                            "customer_id": f"eq.{cid}",
+                            "customer_id": cid_filter,
                             "order": "created_at.desc",
                             "limit": 100
                         })
@@ -1590,8 +1615,8 @@ async def get_user_orders(
                                     if item_info.get("customer_name"):
                                         ro["customer_name"] = item_info["customer_name"]
                                 db_orders.append(ro)
-                    except Exception:
-                        pass
+                except Exception:
+                    pass
 
             # 2. Match orders from orders_items.json (where customer_phone is recorded)
             matched_oids = []
@@ -1806,8 +1831,7 @@ async def orders(
         except Exception:
             return []
 
-    cached_orders = await _fetch_store_cache()
-    db_orders_raw = await _fetch_store_db()
+    cached_orders, db_orders_raw = await asyncio.gather(_fetch_store_cache(), _fetch_store_db())
     db_orders = db_orders_raw if isinstance(db_orders_raw, list) else []
 
     o_items_map = load_orders_items()
@@ -2247,24 +2271,25 @@ async def create_order(body: OrderRequest, user: dict = Depends(require_roles("c
             order_id, client_supplied_total, server_total
         )
 
-    # Decrement inventory stock for ordered items
-    for item in items_list:
-        if isinstance(item, dict):
-            pid = str(item.get("id") or item.get("product_id") or (item.get("product", {}).get("id") if isinstance(item.get("product"), dict) else ""))
-            qty = int(item.get("qty") or item.get("quantity") or 1)
-            if pid and pid in db_products_map:
-                curr_stock = db_products_map[pid].get("stock")
-                if curr_stock is not None:
-                    try:
-                        new_stock = max(0, int(curr_stock) - qty)
-                        await store.patch("products", {"stock": new_stock}, {"id": f"eq.{pid}"})
-                        await cache_del(f"cache:product:{pid}")
-                    except Exception as err:
-                        logger.warning(f"Failed to decrement stock for product {pid}: {err}")
+    # Decrement inventory stock for ordered items concurrently
+    async def _dec_stock(item_dict):
+        pid = str(item_dict.get("id") or item_dict.get("product_id") or (item_dict.get("product", {}).get("id") if isinstance(item_dict.get("product"), dict) else ""))
+        qty = int(item_dict.get("qty") or item_dict.get("quantity") or 1)
+        if pid and pid in db_products_map:
+            curr_stock = db_products_map[pid].get("stock")
+            if curr_stock is not None:
+                try:
+                    new_stock = max(0, int(curr_stock) - qty)
+                    await store.patch("products", {"stock": new_stock}, {"id": f"eq.{pid}"})
+                    await cache_del(f"cache:product:{pid}")
+                except Exception as err:
+                    logger.warning(f"Failed to decrement stock for product {pid}: {err}")
+
+    stock_tasks = [_dec_stock(item) for item in items_list if isinstance(item, dict)]
+    if stock_tasks:
+        await asyncio.gather(*stock_tasks)
     await cache_del("cache:products:all:all:none")
 
-    default_store_id = await resolve_default_store_id()
-    valid_store_id = payload.get("store_id") if (payload.get("store_id") and is_valid_uuid(payload.get("store_id"))) else default_store_id
     delivery_otp = str(secrets.randbelow(9000) + 1000)
 
     provided_disp = payload.get("display_id") or payload.get("order_number") or payload.get("displayId") or payload.get("orderNumber")
@@ -2275,8 +2300,10 @@ async def create_order(body: OrderRequest, user: dict = Depends(require_roles("c
         disp_id = f"GB-{clean_hex_id[:6].upper()}" if len(clean_hex_id) >= 6 else f"GB-{clean_hex_id.upper()}"
 
     user_sub = user.get("sub") if (user and is_valid_uuid(user.get("sub"))) else None
-    valid_cust_id = await get_valid_customer_id(user_sub, phone=raw_phone, name=customer_name)
-    valid_store_id = await get_valid_store_id(payload.get("store_id"))
+    valid_cust_id, valid_store_id = await asyncio.gather(
+        get_valid_customer_id(user_sub, phone=raw_phone, name=customer_name),
+        get_valid_store_id(payload.get("store_id")),
+    )
 
     full_order = {
         "id": order_id,
@@ -2298,7 +2325,7 @@ async def create_order(body: OrderRequest, user: dict = Depends(require_roles("c
         "total_amount": float(server_total),
         "total": float(server_total),
         "payment_method": payload.get("payment_method") or "UPI",
-        "status": payload.get("status") or "placed",
+        "status": "placed",
         "store_id": valid_store_id,
         "delivery_otp": delivery_otp,
         "created_at": now_iso
@@ -2307,7 +2334,7 @@ async def create_order(body: OrderRequest, user: dict = Depends(require_roles("c
     db_payload = {
         "id": full_order["id"],
         "delivery_address": full_order["delivery_address"],
-        "status": full_order["status"],
+        "status": "placed",
         "total": float(full_order["total_amount"]),
         "created_at": now_iso
     }
@@ -2324,7 +2351,7 @@ async def create_order(body: OrderRequest, user: dict = Depends(require_roles("c
                 "customer_phone": db_phone or raw_phone,
                 "delivery_address": full_order["delivery_address"],
                 "delivery_otp": delivery_otp,
-                "status": full_order["status"],
+                "status": "placed",
                 "subtotal": float(subtotal),
                 "delivery_fee": float(delivery_fee),
                 "coupon_discount": float(coupon_discount),
@@ -2363,27 +2390,21 @@ async def create_order(body: OrderRequest, user: dict = Depends(require_roles("c
     try:
         await store.insert("orders", db_payload)
     except Exception as db_err:
-        import logging
-        logging.warning(f"Direct DB insert warning for order {order_id}: {db_err}")
+        if "customer_id" in db_payload:
+            fallback_payload = dict(db_payload)
+            fallback_payload.pop("customer_id", None)
+            try:
+                await store.insert("orders", fallback_payload)
+            except Exception:
+                pass
+        else:
+            logger.warning(f"Direct DB insert warning for order {order_id}: {db_err}")
 
-    # Parallel asynchronous background execution for cloud persistence & pubsub
+    # Parallel asynchronous background execution for cloud cache persistence & pubsub
     async def _bg_persist_order_cloud():
         try:
-            async def _safe_db_insert():
-                try:
-                    await store.insert("orders", db_payload)
-                except Exception as db_err:
-                    if "customer_id" in db_payload:
-                        fallback_payload = dict(db_payload)
-                        fallback_payload.pop("customer_id", None)
-                        try:
-                            await store.insert("orders", fallback_payload)
-                        except Exception:
-                            pass
-
             tasks = [
                 cache_set(f"cloud:order:{order_id}", full_order, ttl_seconds=86400 * 30),
-                _safe_db_insert(),
                 cache_set(f"cloud:order_items:{order_id}", full_order.get("items"), ttl_seconds=86400 * 30),
                 redis_publish("orders:new", full_order),
             ]
@@ -2659,18 +2680,19 @@ async def order_status(
     await asyncio.gather(_sync_single(), _sync_cust(), _sync_list(), return_exceptions=True)
     await redis_publish("orders:status", {"order_id": order_id, "status": body.status})
 
-    # Background async task for Supabase DB upsert, rider shift calculations, stock restoration & disk JSON save
+    # Synchronous DB update for immediate consistency across concurrent requests
+    patch_data = {"status": target_status}
+    if target_status == "delivered":
+        patch_data["delivered_at"] = now_utc_iso
+        patch_data["completed_at"] = now_utc_iso
+    if body.delivery_agent_id:
+        patch_data["delivery_agent_id"] = body.delivery_agent_id
+
+    await idempotent_order_upsert(order_id, patch_data, fallback_single=single, op_name="order_status")
+
+    # Background async task for rider shift calculations & history caching
     async def _bg_persist_db_and_disk():
         try:
-            patch_data = {"status": target_status}
-            if target_status == "delivered":
-                patch_data["delivered_at"] = now_utc_iso
-                patch_data["completed_at"] = now_utc_iso
-            if body.delivery_agent_id:
-                patch_data["delivery_agent_id"] = body.delivery_agent_id
-
-            await idempotent_order_upsert(order_id, patch_data, fallback_single=single, op_name="order_status")
-
             if target_status in ("delivered", "failed_delivery", "returned"):
                 rider_id = body.delivery_agent_id
                 if not rider_id and single and isinstance(single, dict):
@@ -2714,18 +2736,8 @@ async def order_status(
                                                 s["ended_at"] = now.isoformat()
                                         break
                                 save_users_db(users)
-
-            with orders_items_lock:
-                o_map = load_orders_items()
-                clean_oid = str(order_id).strip()
-                for k in [clean_oid, clean_oid.replace("GB-", "").replace("gb-", "")]:
-                    if k in o_map and isinstance(o_map[k], dict):
-                        # orders_items.json is already updated synchronously above;
-                        # here just update the DB-facing delivery fields
-                        pass
-                # No-op: orders_items save is done synchronously outside this task now
         except Exception as err:
-            logger.warning(f"Background order status persistence error for {order_id}: {err}")
+            logger.warning(f"Background order status task error for {order_id}: {err}")
 
     asyncio.create_task(_bg_persist_db_and_disk())
 
@@ -2771,11 +2783,14 @@ async def verify_delivery_otp(
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
 
+    st = str(order.get("status") or "").lower()
+    if st == "cancelled":
+        raise HTTPException(status_code=409, detail="Cannot verify OTP on a cancelled order")
+
     valid_keys = await expand_rider_identity_keys(user)
     if not order_assigned_to_rider(order, valid_keys):
         raise HTTPException(status_code=403, detail="Forbidden: You are not assigned to this order")
 
-    st = str(order.get("status") or "").lower()
     if st in TERMINAL_ORDER_STATUSES and st == "delivered":
         return {
             "success": True,
@@ -2858,13 +2873,13 @@ async def update_delivery_step(order_id: str, body: DeliveryStepRequest, user=De
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
 
-    valid_keys = await expand_rider_identity_keys(user)
-    if not order_assigned_to_rider(order, valid_keys):
-        raise HTTPException(status_code=403, detail="Forbidden: You are not assigned to this order")
-
     st = str(order.get("status") or "").lower()
     if st in TERMINAL_ORDER_STATUSES:
         raise HTTPException(status_code=409, detail="Order is already completed or cancelled")
+
+    valid_keys = await expand_rider_identity_keys(user)
+    if not order_assigned_to_rider(order, valid_keys):
+        raise HTTPException(status_code=403, detail="Forbidden: You are not assigned to this order")
 
     new_status = WORKFLOW_STATUS_MAP.get(step)
     redis_fields = {"workflow_step": step}
@@ -4200,6 +4215,8 @@ async def update_delivery_step(
     if not order_data or not isinstance(order_data, dict):
         if clean_id.startswith("GB-") or clean_id.startswith("gb-"):
             order_data = await cache_get(f"cloud:order:{clean_id[3:]}")
+    if not isinstance(order_data, dict) or not order_data.get("status"):
+        order_data = await load_merged_order(clean_id)
     if not isinstance(order_data, dict):
         order_data = {"id": clean_id, "rawId": clean_id}
 
@@ -4881,24 +4898,38 @@ ORDERS_ITEMS_FILE = DATA_DIR / "orders_items.json"
 import threading as _threading
 orders_items_lock = _threading.Lock()
 
+_orders_items_cache: dict | None = None
+_orders_items_mtime: float = 0.0
+
 
 def load_orders_items() -> dict:
+    global _orders_items_cache, _orders_items_mtime
     if not os.path.exists(ORDERS_ITEMS_FILE):
+        _orders_items_cache = {}
         return {}
     try:
+        mtime = os.path.getmtime(ORDERS_ITEMS_FILE)
+        if _orders_items_cache is not None and mtime == _orders_items_mtime:
+            return dict(_orders_items_cache)
         with open(ORDERS_ITEMS_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-            return data if isinstance(data, dict) else {}
+            _orders_items_cache = data if isinstance(data, dict) else {}
+            _orders_items_mtime = mtime
+            return dict(_orders_items_cache)
     except Exception:
-        return {}
+        return dict(_orders_items_cache) if _orders_items_cache is not None else {}
 
 def save_orders_items_db(data: dict):
+    global _orders_items_cache, _orders_items_mtime
     try:
         os.makedirs(os.path.dirname(ORDERS_ITEMS_FILE), exist_ok=True)
         with open(ORDERS_ITEMS_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
+        _orders_items_cache = dict(data)
+        _orders_items_mtime = os.path.getmtime(ORDERS_ITEMS_FILE)
     except Exception:
         pass
+
 
 USERS_FILE = DATA_DIR / "users.json"
 

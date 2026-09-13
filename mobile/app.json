@@ -8,7 +8,12 @@
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.grabit.mobile"
+      "bundleIdentifier": "com.grabit.mobile",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Allow Grabit to access your location to show available stores and track live delivery.",
+        "NSCameraUsageDescription": "Allow Grabit to use camera for rider document and order photos.",
+        "NSPhotoLibraryUsageDescription": "Allow Grabit to access your photos for profile and document uploads."
+      }
     },
     "android": {
       "package": "com.grabit.mobile",
@@ -21,22 +26,7 @@
         "POST_NOTIFICATIONS"
       ]
     },
-    "plugins": [
-      "expo-router",
-      [
-        "expo-location",
-        {
-          "locationAlwaysAndWhenInUsePermission": "Allow Grabit to access your location to show available stores and track live delivery."
-        }
-      ],
-      [
-        "expo-camera",
-        {
-          "cameraPermission": "Allow Grabit to use camera for rider biometric verification and document uploads."
-        }
-      ],
-      "expo-asset"
-    ],
+    "plugins": [],
     "experiments": {
       "typedRoutes": true
     }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -160,38 +160,59 @@ export default function SellerOrdersScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [fleetRiders, setFleetRiders] = useState<FleetRider[]>(FLEET_RIDERS);
   const [loading, setLoading] = useState(false);
+  const [updatingOrderIds, setUpdatingOrderIds] = useState<Record<string, boolean>>({});
+  const pendingTransitionsRef = useRef<Map<string, { status: Order['status']; timestamp: number }>>(new Map());
 
-  // Sync live orders into local state whenever they change
+  // Check whether two order lists have identical keys, statuses, and rider assignments
+  const isIdenticalOrderList = useCallback((prevList: Order[], nextList: Order[]): boolean => {
+    if (prevList.length !== nextList.length) return false;
+    for (let i = 0; i < prevList.length; i++) {
+      const p = prevList[i];
+      const n = nextList[i];
+      if (
+        p.id !== n.id ||
+        p.rawId !== n.rawId ||
+        p.status !== n.status ||
+        p.rider_id !== n.rider_id ||
+        p.rider_name !== n.rider_name ||
+        p.total !== n.total
+      ) {
+        return false;
+      }
+    }
+    return true;
+  }, []);
+
+  // Sync live orders into local state with pending transition protection
   useEffect(() => {
     if (liveOrders && liveOrders.length > 0) {
       const normalized = normalizeOrders(liveOrders);
-      setOrders(normalized);
+      const now = Date.now();
+
+      // Clean expired transitions (> 10s) and apply active ones over stale incoming poll data
+      const merged = normalized.map((ord) => {
+        const p1 = pendingTransitionsRef.current.get(ord.id);
+        const p2 = ord.rawId ? pendingTransitionsRef.current.get(ord.rawId) : undefined;
+        const pending = p1 || p2;
+
+        if (pending && now - pending.timestamp < 10000) {
+          return { ...ord, status: pending.status };
+        }
+        return ord;
+      });
+
+      setOrders((prev) => {
+        if (isIdenticalOrderList(prev, merged)) {
+          return prev; // Retain exact state reference to prevent re-render flicker
+        }
+        return merged;
+      });
     }
-    setLoading(liveLoading);
-  }, [liveOrders, liveLoading, normalizeOrders]);
+  }, [liveOrders, normalizeOrders, isIdenticalOrderList]);
 
   // Packing Slip & Reassign Modal State
   const [selectedPackingSlip, setSelectedPackingSlip] = useState<Order | null>(null);
   const [selectedReassignOrder, setSelectedReassignOrder] = useState<Order | null>(null);
-
-  // Fetch real orders from backend with fallback
-  const fetchOrdersSilent = useCallback(async () => {
-    refreshOrders();
-    try {
-      const res = await get('/store/orders');
-      let apiOrders: Order[] = [];
-      const listData = Array.isArray(res) ? res : (Array.isArray(res?.orders) ? res.orders : []);
-      if (listData.length > 0) {
-        apiOrders = normalizeOrders(listData);
-        setOrders(apiOrders);
-        await setItem('grabit_seller_orders', apiOrders).catch(() => {});
-      }
-    } catch {
-      // Retain existing live fetched orders
-    } finally {
-      setLoading(false);
-    }
-  }, [refreshOrders, normalizeOrders]);
 
   // Fetch real riders from backend with fallback
   const fetchRiders = useCallback(async () => {
@@ -215,16 +236,15 @@ export default function SellerOrdersScreen() {
     }
   }, []);
 
-  // Fetch riders once on mount & cache init
+  // Fetch initial cached orders & riders once on mount
   useEffect(() => {
     getItem<Order[]>('grabit_seller_orders').then((cached) => {
       if (cached && Array.isArray(cached) && cached.length > 0) {
         setOrders((prev) => (prev.length > 0 ? prev : cached));
       }
     }).catch(() => {});
-    fetchOrdersSilent();
     fetchRiders();
-  }, [fetchOrdersSilent, fetchRiders]);
+  }, [fetchRiders]);
 
   const handlePurgeAllOrders = async () => {
     try {
@@ -245,26 +265,62 @@ export default function SellerOrdersScreen() {
   const handleUpdateStatus = async (order: Order, newStatus: Order['status']) => {
     const displayOrderId = order.id;
     const backendOrderId = order.rawId || order.id;
+
+    // Prevent duplicate in-flight requests on the same order
+    if (updatingOrderIds[displayOrderId] || (order.rawId && updatingOrderIds[order.rawId])) {
+      return;
+    }
+
+    // 1. Mark in-flight loading state
+    setUpdatingOrderIds((prev) => ({
+      ...prev,
+      [displayOrderId]: true,
+      ...(backendOrderId ? { [backendOrderId]: true } : {}),
+    }));
+
+    // 2. Protect against stale polling overwrite
+    const now = Date.now();
+    pendingTransitionsRef.current.set(displayOrderId, { status: newStatus, timestamp: now });
+    if (backendOrderId) {
+      pendingTransitionsRef.current.set(backendOrderId, { status: newStatus, timestamp: now });
+    }
+
+    // 3. Optimistic local update
     let previousOrders: Order[] = [];
     setOrders((prev) => {
       previousOrders = prev;
-      const updated = prev.map((o) => (o.id === displayOrderId || o.rawId === backendOrderId || o.rawId === displayOrderId)
-        ? { ...o, status: newStatus }
-        : o);
+      const updated = prev.map((o) =>
+        o.id === displayOrderId || o.rawId === backendOrderId || o.rawId === displayOrderId
+          ? { ...o, status: newStatus }
+          : o
+      );
       setItem('grabit_seller_orders', updated).catch(() => {});
       return updated;
     });
-    showToast(`Order #${displayOrderId} updated to ${newStatus}`, 'success');
 
     try {
-      await patch(`/orders/${encodeURIComponent(backendOrderId)}/status`, { status: newStatus.toLowerCase() });
+      await patch(`/orders/${encodeURIComponent(backendOrderId)}/status`, {
+        status: newStatus.toLowerCase(),
+      });
       invalidateOrdersCache();
+      refreshOrders();
+      showToast(`Order #${displayOrderId} updated to ${newStatus}`, 'success');
     } catch (err: any) {
+      // Revert optimistic update on failure
+      pendingTransitionsRef.current.delete(displayOrderId);
+      if (backendOrderId) pendingTransitionsRef.current.delete(backendOrderId);
       if (previousOrders.length > 0) {
         setOrders(previousOrders);
         setItem('grabit_seller_orders', previousOrders).catch(() => {});
       }
       showToast(err?.message || `Failed to update status for order #${displayOrderId}`, 'error');
+    } finally {
+      setUpdatingOrderIds((prev) => {
+        const next = { ...prev };
+        delete next[displayOrderId];
+        if (backendOrderId) delete next[backendOrderId];
+        return next;
+      });
     }
   };
 
@@ -324,6 +380,13 @@ export default function SellerOrdersScreen() {
   };
 
   const handleHandover = async (order: Order) => {
+    const displayOrderId = order.id;
+    const backendOrderId = order.rawId || order.id;
+
+    if (updatingOrderIds[displayOrderId] || (backendOrderId && updatingOrderIds[backendOrderId])) {
+      return;
+    }
+
     const riderId = order.rider_id || order.delivery_agent_id;
     if (!riderId) {
       setSelectedReassignOrder(order);
@@ -331,16 +394,57 @@ export default function SellerOrdersScreen() {
       return;
     }
 
+    setUpdatingOrderIds((prev) => ({
+      ...prev,
+      [displayOrderId]: true,
+      ...(backendOrderId ? { [backendOrderId]: true } : {}),
+    }));
+
+    const now = Date.now();
+    pendingTransitionsRef.current.set(displayOrderId, { status: 'OUT_FOR_DELIVERY' as Order['status'], timestamp: now });
+    if (backendOrderId) {
+      pendingTransitionsRef.current.set(backendOrderId, { status: 'OUT_FOR_DELIVERY' as Order['status'], timestamp: now });
+    }
+
+    let previousOrders: Order[] = [];
+    setOrders((prev) => {
+      previousOrders = prev;
+      const updated: Order[] = prev.map((o) =>
+        o.id === displayOrderId || o.rawId === backendOrderId || o.rawId === displayOrderId
+          ? { ...o, status: 'OUT_FOR_DELIVERY' as Order['status'] }
+          : o
+      );
+      setItem('grabit_seller_orders', updated).catch(() => {});
+      return updated;
+    });
+
     try {
-      await post(`/orders/${encodeURIComponent(order.rawId || order.id)}/assign`, {
+      await post(`/orders/${encodeURIComponent(backendOrderId)}/assign`, {
         delivery_agent_id: riderId,
         rider_name: order.rider_name || 'Assigned Delivery Agent',
       });
+      await patch(`/orders/${encodeURIComponent(backendOrderId)}/status`, {
+        status: 'out_for_delivery',
+      }).catch(() => {});
+
       invalidateOrdersCache();
       refreshOrders();
       showToast('Order handed over to the rider', 'success');
     } catch (err: any) {
+      pendingTransitionsRef.current.delete(displayOrderId);
+      if (backendOrderId) pendingTransitionsRef.current.delete(backendOrderId);
+      if (previousOrders.length > 0) {
+        setOrders(previousOrders);
+        setItem('grabit_seller_orders', previousOrders).catch(() => {});
+      }
       showToast(err?.message || 'Failed to hand over order', 'error');
+    } finally {
+      setUpdatingOrderIds((prev) => {
+        const next = { ...prev };
+        delete next[displayOrderId];
+        if (backendOrderId) delete next[backendOrderId];
+        return next;
+      });
     }
   };
 
@@ -723,7 +827,7 @@ export default function SellerOrdersScreen() {
             <Trash2 size={14} color="#DC2626" style={{ marginRight: 3 }} />
             <Text style={{ color: '#DC2626', fontSize: 11, fontWeight: '700' }}>Clear Test Orders</Text>
           </Pressable>
-          <Pressable style={[styles.refreshBtn, { padding: 6 }]} onPress={fetchOrdersSilent}>
+          <Pressable style={[styles.refreshBtn, { padding: 6 }]} onPress={refreshOrders}>
             <RefreshCw size={16} color={COLORS.primary} />
           </Pressable>
         </View>
@@ -787,7 +891,7 @@ export default function SellerOrdersScreen() {
       ) : (
         <FlatList
           data={filteredOrders}
-          keyExtractor={(item) => item.id}
+          keyExtractor={(item) => item.rawId || item.id}
           style={{ flex: 1 }}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
@@ -797,6 +901,7 @@ export default function SellerOrdersScreen() {
           removeClippedSubviews={true}
           renderItem={({ item }) => {
             const badge = getStatusBadgeStyle(item.status);
+            const isUpdating = !!(updatingOrderIds[item.id] || (item.rawId && updatingOrderIds[item.rawId]));
             return (
               <View style={styles.orderCard}>
                 <View style={styles.cardHeader}>
@@ -892,6 +997,7 @@ export default function SellerOrdersScreen() {
                       <Pressable
                         style={styles.reassignBtn}
                         onPress={() => setSelectedReassignOrder(item)}
+                        disabled={isUpdating}
                       >
                         <UserCheck size={14} color="#0066FF" style={{ marginRight: 4 }} />
                         <Text style={styles.reassignBtnText}>Reassign</Text>
@@ -900,31 +1006,46 @@ export default function SellerOrdersScreen() {
 
                     {item.status === 'PLACED' && (
                       <Pressable
-                        style={styles.acceptBtn}
+                        style={[styles.acceptBtn, isUpdating && { opacity: 0.7 }]}
                         onPress={() => handleUpdateStatus(item, 'PREPARING')}
+                        disabled={isUpdating}
                       >
-                        <PackageCheck size={14} color="#FFFFFF" style={{ marginRight: 4 }} />
-                        <Text style={styles.actionBtnText}>Accept & Pack</Text>
+                        {isUpdating ? (
+                          <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 6 }} />
+                        ) : (
+                          <PackageCheck size={14} color="#FFFFFF" style={{ marginRight: 4 }} />
+                        )}
+                        <Text style={styles.actionBtnText}>{isUpdating ? 'Accepting...' : 'Accept & Start'}</Text>
                       </Pressable>
                     )}
 
                     {item.status === 'PREPARING' && (
                       <Pressable
-                        style={styles.readyBtn}
+                        style={[styles.readyBtn, isUpdating && { opacity: 0.7 }]}
                         onPress={() => handleUpdateStatus(item, 'READY_FOR_PICKUP')}
+                        disabled={isUpdating}
                       >
-                        <CheckCircle size={14} color="#FFFFFF" style={{ marginRight: 4 }} />
-                        <Text style={styles.actionBtnText}>Mark Ready for Pickup</Text>
+                        {isUpdating ? (
+                          <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 6 }} />
+                        ) : (
+                          <CheckCircle size={14} color="#FFFFFF" style={{ marginRight: 4 }} />
+                        )}
+                        <Text style={styles.actionBtnText}>{isUpdating ? 'Marking Ready...' : 'Mark Ready'}</Text>
                       </Pressable>
                     )}
 
                     {item.status === 'READY_FOR_PICKUP' && (
                       <Pressable
-                        style={styles.dispatchBtn}
+                        style={[styles.dispatchBtn, isUpdating && { opacity: 0.7 }]}
                         onPress={() => handleHandover(item)}
+                        disabled={isUpdating}
                       >
-                        <Truck size={14} color="#FFFFFF" style={{ marginRight: 4 }} />
-                        <Text style={styles.actionBtnText}>Handover Rider</Text>
+                        {isUpdating ? (
+                          <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 6 }} />
+                        ) : (
+                          <Truck size={14} color="#FFFFFF" style={{ marginRight: 4 }} />
+                        )}
+                        <Text style={styles.actionBtnText}>{isUpdating ? 'Handing Over...' : 'Handover'}</Text>
                       </Pressable>
                     )}
                   </ScrollView>

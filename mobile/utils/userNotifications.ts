@@ -8,6 +8,7 @@ export interface UserNotification {
   message: string;
   time: string;
   created_at: string;
+  timestamp?: string | number;
   link?: string;
   category?: 'active' | 'orders' | 'promo' | 'system' | string;
   statusBadge?: string;

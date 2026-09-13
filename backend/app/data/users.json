@@ -61,7 +61,7 @@
     "biometricsDone": true,
     "last_active_at": "2026-09-11T13:00:30.817526+05:30",
     "created_at": "2026-01-05T09:30:00Z",
-    "shift_started_at": "2026-09-11T13:00:30.817526+05:30",
+    "shift_started_at": "2026-09-12T17:54:42.546511+05:30",
     "arrived_late_today": true,
     "shift_sessions": [
       {
@@ -86,6 +86,10 @@
       },
       {
         "started_at": "2026-09-11T13:00:30.817526+05:30",
+        "ended_at": null
+      },
+      {
+        "started_at": "2026-09-12T17:54:42.546511+05:30",
         "ended_at": null
       }
     ],

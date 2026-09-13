@@ -1,10 +1,44 @@
 """Thin PostgREST client: API code stays independent from a specific ORM."""
+import asyncio
 import logging
 import httpx
 from fastapi import HTTPException
 from .config import settings
 
 logger = logging.getLogger(__name__)
+
+_store_http_client: httpx.AsyncClient | None = None
+_store_client_loop_id: int | None = None
+
+
+def get_store_http_client() -> httpx.AsyncClient:
+    global _store_http_client, _store_client_loop_id
+    try:
+        current_loop = asyncio.get_running_loop()
+        current_loop_id = id(current_loop)
+    except RuntimeError:
+        current_loop_id = None
+
+    if current_loop_id is not None and current_loop_id != _store_client_loop_id:
+        # Event loop changed — discard old client to prevent loop binding mismatch
+        _store_http_client = None
+        _store_client_loop_id = current_loop_id
+
+    if _store_http_client is None or _store_http_client.is_closed:
+        _store_http_client = httpx.AsyncClient(
+            timeout=12.0,
+            limits=httpx.Limits(
+                max_keepalive_connections=50,
+                max_connections=100,
+                keepalive_expiry=30.0,
+            ),
+            http2=False,
+        )
+        try:
+            _store_client_loop_id = id(asyncio.get_running_loop())
+        except RuntimeError:
+            pass
+    return _store_http_client
 
 
 class Store:
@@ -43,12 +77,12 @@ class Store:
         }
 
     async def get(self, table, params=None):
-        async with httpx.AsyncClient(timeout=12) as client:
-            response = await client.get(
-                f"{self.base}/{table}",
-                headers=self._read_headers,
-                params=params or {},
-            )
+        client = get_store_http_client()
+        response = await client.get(
+            f"{self.base}/{table}",
+            headers=self._read_headers,
+            params=params or {},
+        )
         if response.is_error:
             detail = (
                 response.json().get("message", response.text)
@@ -60,12 +94,12 @@ class Store:
 
     async def insert(self, table, payload):
         headers = self._write_headers | {"Prefer": "return=representation"}
-        async with httpx.AsyncClient(timeout=12) as client:
-            response = await client.post(
-                f"{self.base}/{table}",
-                headers=headers,
-                json=payload,
-            )
+        client = get_store_http_client()
+        response = await client.post(
+            f"{self.base}/{table}",
+            headers=headers,
+            json=payload,
+        )
         if response.is_error:
             detail = (
                 response.json().get("message", response.text)
@@ -78,13 +112,13 @@ class Store:
 
     async def patch(self, table, payload, params):
         headers = self._write_headers | {"Prefer": "return=representation"}
-        async with httpx.AsyncClient(timeout=12) as client:
-            response = await client.patch(
-                f"{self.base}/{table}",
-                headers=headers,
-                params=params,
-                json=payload,
-            )
+        client = get_store_http_client()
+        response = await client.patch(
+            f"{self.base}/{table}",
+            headers=headers,
+            params=params,
+            json=payload,
+        )
         if response.is_error:
             detail = (
                 response.json().get("message", response.text)
@@ -95,12 +129,12 @@ class Store:
         return response.json()
 
     async def delete(self, table, params):
-        async with httpx.AsyncClient(timeout=12) as client:
-            response = await client.delete(
-                f"{self.base}/{table}",
-                headers=self._write_headers,
-                params=params,
-            )
+        client = get_store_http_client()
+        response = await client.delete(
+            f"{self.base}/{table}",
+            headers=self._write_headers,
+            params=params,
+        )
         if response.is_error:
             detail = (
                 response.json().get("message", response.text)
@@ -111,3 +145,4 @@ class Store:
 
 
 store = Store()
+

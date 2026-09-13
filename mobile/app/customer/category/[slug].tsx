@@ -628,7 +628,7 @@ export default function CategoryProductsPage() {
 
   const activeConfig = CATEGORY_CONFIGS[activeCategoryKey] || {
     id: activeCategoryKey,
-    title: (slug || 'Category').replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+    title: (slug || 'Category').replace(/-/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase()),
     subtitle: `Explore fresh products & top offers in ${slug}.`,
     placeholder: `Search ${slug}...`,
     bannerBg: '#064E3B',

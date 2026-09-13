@@ -84,7 +84,9 @@ export async function getAuthToken(forceRefresh = false): Promise<string | null>
 
 // In-memory response cache for non-order GET operations
 const apiCache = new Map<string, { data: any; timestamp: number }>();
-const CACHE_TTL_MS = 5000; // 5s — short TTL to keep data fresh
+const CACHE_TTL_MS = 15000; // 15s default TTL for general endpoints
+const CATALOG_CACHE_TTL_MS = 60000; // 60s for static categories & product catalogs
+const inFlightGetRequests = new Map<string, Promise<any>>();
 
 // Paths that should ALWAYS bypass cache for real-time freshness
 const REALTIME_PATHS = new Set([
@@ -100,6 +102,7 @@ const REALTIME_PATHS = new Set([
 
 export function clearApiCache() {
   apiCache.clear();
+  inFlightGetRequests.clear();
 }
 
 export function invalidateOrdersCache() {
@@ -335,14 +338,19 @@ export async function api<T = any>(path: string, options: RequestInit = {}): Pro
   const isDeliveryPath = cleanPath.startsWith('/delivery') || cleanPath.includes('/verify-otp') || cleanPath.includes('/step');
   const isStorePath = cleanPath.startsWith('/store') || cleanPath.startsWith('/seller');
   const isOrderPath = cleanPath.includes('/orders') || isStorePath;
+  const isCatalogPath = cleanPath === '/categories' || cleanPath === '/categories/' || (cleanPath.startsWith('/products') && !cleanPath.includes('?q='));
+  const isRealtimePath = REALTIME_PATHS.has(cleanPath) || cleanPath.startsWith('/orders') || cleanPath.startsWith('/store/orders');
 
-  // RAM Cache lookup (15s for static endpoints, 2s deduplication on orders/live endpoints)
+  // RAM Cache lookup (60s for catalog, 15s for static, 2s deduplication on orders/live endpoints)
   if (isGet && !isDeliveryPath) {
-    const isRealtimePath = REALTIME_PATHS.has(cleanPath) || cleanPath.startsWith('/orders') || cleanPath.startsWith('/store/orders');
     const cached = apiCache.get(cleanPath);
-    const ttl = (isRealtimePath || isOrderPath) ? 2000 : CACHE_TTL_MS;
+    const ttl = isCatalogPath ? CATALOG_CACHE_TTL_MS : (isRealtimePath || isOrderPath) ? 2000 : CACHE_TTL_MS;
     if (cached && Date.now() - cached.timestamp < ttl) {
       return cached.data as T;
+    }
+    // In-flight request deduplication / coalescing
+    if (inFlightGetRequests.has(cleanPath)) {
+      return inFlightGetRequests.get(cleanPath) as Promise<T | null>;
     }
   }
 
@@ -356,92 +364,104 @@ export async function api<T = any>(path: string, options: RequestInit = {}): Pro
     cleanPath.startsWith('/tickets')
   );
 
-  let token = isPublicGet && cachedAuthToken ? cachedAuthToken : await getAuthToken();
-  if (isStorePath && (!token || token === 'demo-customer-token')) {
-    const sellerToken = await getSecureItem('grabit_seller_access').catch(() => null);
-    token = sellerToken || 'demo-seller-token';
-  } else if (isDeliveryPath) {
-    const riderToken = await getSecureItem('grabit_rider_token').catch(() => null);
-    if (riderToken) {
-      token = riderToken;
-    } else if (!token || token === 'demo-seller-token' || token === 'demo-customer-token') {
-      token = 'demo-delivery-token';
+  const fetchPromise = (async (): Promise<T | null> => {
+    let token = isPublicGet && cachedAuthToken ? cachedAuthToken : await getAuthToken();
+    if (isStorePath && (!token || token === 'demo-customer-token')) {
+      const sellerToken = await getSecureItem('grabit_seller_access').catch(() => null);
+      token = sellerToken || 'demo-seller-token';
+    } else if (isDeliveryPath) {
+      const riderToken = await getSecureItem('grabit_rider_token').catch(() => null);
+      if (riderToken) {
+        token = riderToken;
+      } else if (!token || token === 'demo-seller-token' || token === 'demo-customer-token') {
+        token = 'demo-delivery-token';
+      }
     }
+
+    // 5s timeout for GET, 10s for mutations
+    const timeoutMs = isGet ? 5000 : 10000;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const response = await fetch(`${baseUrl}${cleanPath}`, {
+        ...options,
+        signal: controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...options.headers,
+        },
+      });
+
+      clearTimeout(timeoutId);
+
+      if (response.status === 204) return null;
+      if ((response.status === 401 || response.status === 403) && isGet) {
+        if (cleanPath.startsWith('/products') || cleanPath.startsWith('/categories') || cleanPath.startsWith('/orders') || cleanPath.startsWith('/store') || cleanPath.startsWith('/seller')) {
+          return await fetchDirectFromSupabase<T>(cleanPath);
+        }
+        return null;
+      }
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        if (isGet && (cleanPath.startsWith('/products') || cleanPath.startsWith('/categories') || cleanPath.startsWith('/orders') || cleanPath.startsWith('/store') || cleanPath.startsWith('/seller'))) {
+          const cloudData = await fetchDirectFromSupabase<T>(cleanPath);
+          if (cloudData) return cloudData;
+        }
+        throw new Error(data.detail || `Server error (${response.status})`);
+      }
+
+      if (isGet && data && !isDeliveryPath) {
+        apiCache.set(cleanPath, { data, timestamp: Date.now() });
+      }
+
+      return data as T;
+    } catch (err: any) {
+      clearTimeout(timeoutId);
+
+      if (isGet) {
+        const stale = apiCache.get(cleanPath);
+        if (stale) return stale.data as T;
+        if (cleanPath.startsWith('/products') || cleanPath.startsWith('/categories') || cleanPath.startsWith('/orders') || cleanPath.startsWith('/store') || cleanPath.startsWith('/seller')) {
+          const cloudData = await fetchDirectFromSupabase<T>(cleanPath);
+          if (cloudData) return cloudData;
+        }
+        return null;
+      }
+
+      // Direct Supabase Cloud REST Fallback for POST/PATCH when local backend is unreachable
+      if (cleanPath.startsWith('/orders') || cleanPath.startsWith('/store') || cleanPath.startsWith('/seller')) {
+        const reqBody = typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
+        if (options.method === 'POST') {
+          const cloudPost = await postDirectToSupabase<T>('orders', reqBody);
+          if (cloudPost) return cloudPost;
+        } else if (options.method === 'PATCH') {
+          const cloudPatch = await patchDirectToSupabase<T>(cleanPath, reqBody);
+          if (cloudPatch) return cloudPatch;
+          return { success: true, status: reqBody?.status } as unknown as T;
+        }
+      }
+
+      if (options.method === 'PATCH' || options.method === 'POST') {
+        return { success: true } as unknown as T;
+      }
+
+      throw err;
+    } finally {
+      if (isGet) {
+        inFlightGetRequests.delete(cleanPath);
+      }
+    }
+  })();
+
+  if (isGet && !isDeliveryPath) {
+    inFlightGetRequests.set(cleanPath, fetchPromise);
   }
 
-  // Fast 5s timeout for GET (up from 1.5s which caused premature aborts on seller portal)
-  const timeoutMs = isGet ? 5000 : 10000;
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const response = await fetch(`${baseUrl}${cleanPath}`, {
-      ...options,
-      signal: controller.signal,
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...options.headers,
-      },
-    });
-
-    clearTimeout(timeoutId);
-
-    if (response.status === 204) return null;
-    if ((response.status === 401 || response.status === 403) && isGet) {
-      if (cleanPath.startsWith('/products') || cleanPath.startsWith('/categories') || cleanPath.startsWith('/orders') || cleanPath.startsWith('/store') || cleanPath.startsWith('/seller')) {
-        return await fetchDirectFromSupabase<T>(cleanPath);
-      }
-      return null;
-    }
-
-    const data = await response.json().catch(() => ({}));
-
-    if (!response.ok) {
-      if (isGet && (cleanPath.startsWith('/products') || cleanPath.startsWith('/categories') || cleanPath.startsWith('/orders') || cleanPath.startsWith('/store') || cleanPath.startsWith('/seller'))) {
-        const cloudData = await fetchDirectFromSupabase<T>(cleanPath);
-        if (cloudData) return cloudData;
-      }
-      throw new Error(data.detail || `Server error (${response.status})`);
-    }
-
-    if (isGet && data && !isDeliveryPath) {
-      apiCache.set(cleanPath, { data, timestamp: Date.now() });
-    }
-
-    return data as T;
-  } catch (err: any) {
-    clearTimeout(timeoutId);
-
-    if (isGet) {
-      const stale = apiCache.get(cleanPath);
-      if (stale) return stale.data as T;
-      if (cleanPath.startsWith('/products') || cleanPath.startsWith('/categories') || cleanPath.startsWith('/orders') || cleanPath.startsWith('/store') || cleanPath.startsWith('/seller')) {
-        const cloudData = await fetchDirectFromSupabase<T>(cleanPath);
-        if (cloudData) return cloudData;
-      }
-      return null;
-    }
-
-    // Direct Supabase Cloud REST Fallback for POST/PATCH when local backend is unreachable
-    if (cleanPath.startsWith('/orders') || cleanPath.startsWith('/store') || cleanPath.startsWith('/seller')) {
-      const reqBody = typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
-      if (options.method === 'POST') {
-        const cloudPost = await postDirectToSupabase<T>('orders', reqBody);
-        if (cloudPost) return cloudPost;
-      } else if (options.method === 'PATCH') {
-        const cloudPatch = await patchDirectToSupabase<T>(cleanPath, reqBody);
-        if (cloudPatch) return cloudPatch;
-        return { success: true, status: reqBody?.status } as unknown as T;
-      }
-    }
-
-    if (options.method === 'PATCH' || options.method === 'POST') {
-      return { success: true } as unknown as T;
-    }
-
-    throw err;
-  }
+  return fetchPromise;
 }
 
 export const get = <T = any>(path: string) => api<T>(path);

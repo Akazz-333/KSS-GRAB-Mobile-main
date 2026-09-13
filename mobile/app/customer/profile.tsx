@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -54,46 +54,6 @@ export default function ProfilePage() {
   const [addAmount, setAddAmount] = useState<string>('100');
   const [isSavingProfile, setIsSavingProfile] = useState<boolean>(false);
 
-  // Sync state when AuthContext user updates & fetch live profile from DB for logged-in phone
-  useEffect(() => {
-    const resolveCredentials = async () => {
-      try {
-        const cust = await getItem<UserProfile>('grabit_customer_user').catch(() => null);
-        const activeUser = cust || user;
-
-        if (activeUser) {
-          const uPhone = activeUser.phone || user?.phone || '';
-          const uName = activeUser.name || (activeUser as any)?.full_name || user?.name || (user as any)?.full_name || 'Customer User';
-          const uEmail = (activeUser as any)?.email || (user as any)?.email || '';
-
-          setUserName(uName);
-          setUserPhone(uPhone);
-          setUserEmail(uEmail);
-
-          // Fetch live credentials from backend for this user's phone number
-          const liveProfile = await get<any>('/users/me').catch(() => null);
-          if (liveProfile && (liveProfile.full_name || liveProfile.name)) {
-            const liveName = liveProfile.full_name || liveProfile.name;
-            setUserName(liveName);
-            if (liveProfile.email) setUserEmail(liveProfile.email);
-            if (liveProfile.phone) setUserPhone(liveProfile.phone);
-
-            updateProfile({
-              name: liveName,
-              full_name: liveName,
-              email: liveProfile.email || uEmail,
-              phone: liveProfile.phone || uPhone,
-            });
-          }
-        }
-      } catch (err) {
-        if (__DEV__) console.log('[ProfilePage] Live profile fetch error:', err);
-      }
-    };
-
-    resolveCredentials();
-  }, [user]);
-
   const rawPhone = (user?.phone || '').replace(/\D/g, '');
   const cleanPhone = rawPhone.length >= 10 ? rawPhone.slice(-10) : rawPhone;
   const addressStorageKey = cleanPhone ? `grabit_addresses_${cleanPhone}` : 'grabit_addresses';
@@ -105,6 +65,13 @@ export default function ProfilePage() {
       if (bal !== null && bal !== undefined) setWalletBalance(bal);
     });
   }, [walletStorageKey]);
+
+  const openEditProfile = () => {
+    setUserName(user?.name || (user as any)?.full_name || 'Customer User');
+    setUserPhone(user?.phone || '');
+    setUserEmail((user as any)?.email || '');
+    setActiveModal('edit-profile');
+  };
 
   const notify = (msg: string) => {
     if (Platform.OS === 'android') {
@@ -149,7 +116,7 @@ export default function ProfilePage() {
         setAddressesList([defaultAddressItem]);
       }
     });
-  }, [addressStorageKey, savedAddresses]);
+  }, [addressStorageKey]);
 
   const saveAddressesToStorage = async (list: Address[]) => {
     setAddressesList(list);
@@ -419,7 +386,7 @@ export default function ProfilePage() {
           </Pressable>
 
           {/* Item 6: Profile */}
-          <Pressable style={styles.menuRow} onPress={() => setActiveModal('edit-profile')}>
+          <Pressable style={styles.menuRow} onPress={openEditProfile}>
             <View style={styles.menuIconCircle}>
               <User size={18} color="#0F172A" />
             </View>
