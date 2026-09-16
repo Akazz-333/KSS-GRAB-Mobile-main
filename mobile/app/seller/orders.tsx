@@ -135,8 +135,11 @@ export default function SellerOrdersScreen() {
 
       return {
         ...o,
-        id: formatDisplayOrderId(o),
+        // Preserve the canonical UUID in both id and rawId — do NOT overwrite with display alias
+        id: String(o.rawId || o.id || ''),
         rawId: String(o.rawId || o.id || ''),
+        // displayId is the human-readable alias (GB-XXXXXX) for UI rendering only
+        displayId: formatDisplayOrderId(o),
         customer_name: validCustName,
         customer_phone: formattedPhone,
         address: String(o.delivery_address || o.address || 'KSS Metro Tech Park, Sector 4, Bengaluru'),
@@ -150,6 +153,7 @@ export default function SellerOrdersScreen() {
         payment_method: String(o.payment_method || 'UPI').toUpperCase(),
         payment_status: String(o.payment_status || 'PAID').toUpperCase(),
       };
+
     });
   }, []);
 
@@ -261,7 +265,7 @@ export default function SellerOrdersScreen() {
   };
 
   const handleUpdateStatus = async (order: Order, newStatus: Order['status']) => {
-    const displayOrderId = order.id;
+    const displayOrderId = formatDisplayOrderId(order);
     const backendOrderId = order.rawId || order.id;
 
     // Prevent duplicate in-flight requests on the same order
@@ -359,7 +363,7 @@ export default function SellerOrdersScreen() {
       return updated;
     });
     setSelectedReassignOrder(null);
-    showToast(`Order #${order.id} assigned to ${rider.name}`, 'success');
+    showToast(`Order #${formatDisplayOrderId(order)} assigned to ${rider.name}`, 'success');
 
     try {
       await post(`/orders/${encodeURIComponent(order.rawId || order.id)}/assign`, {
@@ -373,12 +377,12 @@ export default function SellerOrdersScreen() {
         setOrders(previousOrders);
         setItem('grabit_seller_orders', previousOrders).catch(() => {});
       }
-      showToast(err?.message || `Failed to assign rider to order #${order.id}`, 'error');
+      showToast(err?.message || `Failed to assign rider to order #${formatDisplayOrderId(order)}`, 'error');
     }
   };
 
   const handleHandover = async (order: Order) => {
-    const displayOrderId = order.id;
+    const displayOrderId = formatDisplayOrderId(order);
     const backendOrderId = order.rawId || order.id;
 
     if (updatingOrderIds[displayOrderId] || (backendOrderId && updatingOrderIds[backendOrderId])) {
@@ -490,7 +494,7 @@ export default function SellerOrdersScreen() {
     <head>
       <meta charset="utf-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-      <title>Order Slip #${order.id}</title>
+      <title>Order Slip #${formatDisplayOrderId(order)}</title>
       <style>
         @media print {
           body { margin: 0; padding: 12px; }
@@ -623,7 +627,7 @@ export default function SellerOrdersScreen() {
       <div class="header-box">
         <div class="brand-title">GRABIT SUPERMARKET</div>
         <div class="brand-sub">Vendor Fulfillment Center • Dark Store #882</div>
-        <div class="order-badge">ORDER REF: ${order.id}</div>
+        <div class="order-badge">ORDER REF: ${formatDisplayOrderId(order)}</div>
         <div style="font-size: 11px; color: #64748b; margin-top: 6px;">Printed: ${dateStr}</div>
       </div>
 
@@ -696,7 +700,7 @@ export default function SellerOrdersScreen() {
             await Sharing.shareAsync(uri, {
               UTI: 'com.adobe.pdf',
               mimeType: 'application/pdf',
-              dialogTitle: `Save Order Bill #${order.id} as PDF`
+              dialogTitle: `Save Order Bill #${formatDisplayOrderId(order)} as PDF`
             });
             showToast(`Order Bill PDF generated successfully! 📄`, 'success');
             return;
@@ -716,7 +720,7 @@ export default function SellerOrdersScreen() {
           setTimeout(() => {
             printWindow.print();
           }, 300);
-          showToast(`Opening PDF Print Dialog for Order #${order.id}...`, 'success');
+          showToast(`Opening PDF Print Dialog for Order #${formatDisplayOrderId(order)}...`, 'success');
           return;
         }
       }
@@ -734,7 +738,7 @@ export default function SellerOrdersScreen() {
       if (Platform.OS !== 'web') {
         try {
           await Print.printAsync({ html });
-          showToast(`Printing Order Slip #${order.id}...`, 'success');
+          showToast(`Printing Order Slip #${formatDisplayOrderId(order)}...`, 'success');
           return;
         } catch (printErr) {
           if (__DEV__) console.log('[Print Async Error]', printErr);
@@ -750,7 +754,7 @@ export default function SellerOrdersScreen() {
           setTimeout(() => {
             printWindow.print();
           }, 250);
-          showToast(`Printing Order Slip #${order.id}...`, 'success');
+          showToast(`Printing Order Slip #${formatDisplayOrderId(order)}...`, 'success');
           return;
         }
       }
@@ -783,7 +787,8 @@ export default function SellerOrdersScreen() {
 
       const q = searchQuery.toLowerCase();
       const matchesSearch =
-        order.id.toLowerCase().includes(q) ||
+        (order.displayId || order.id || '').toLowerCase().includes(q) ||
+        (order.rawId || '').toLowerCase().includes(q) ||
         (order.customer_name || '').toLowerCase().includes(q) ||
         (order.customer_phone || '').includes(q);
       return matchesTab && matchesSearch;
@@ -913,7 +918,7 @@ export default function SellerOrdersScreen() {
                 <View style={styles.cardHeader}>
                   <View style={{ flex: 1, minWidth: 0, marginRight: 8 }}>
                     <Text style={styles.orderId} numberOfLines={1} ellipsizeMode="middle">
-                      {item.id}
+                      {item.displayId || formatDisplayOrderId(item)}
                     </Text>
                     <Text style={styles.timeText} numberOfLines={1}>
                       {formatTimeDisplay(item.created_at)}

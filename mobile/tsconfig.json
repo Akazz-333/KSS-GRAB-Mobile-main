@@ -17,14 +17,11 @@
     "noEmit": true,
     "resolveJsonModule": true,
     "skipLibCheck": true,
-    "target": "ESNext",
-    "baseUrl": ".",
     "paths": {
       "@/*": [
         "./*"
       ]
-    },
-    "ignoreDeprecations": "6.0"
+    }
   },
   "include": [
     "**/*.ts",

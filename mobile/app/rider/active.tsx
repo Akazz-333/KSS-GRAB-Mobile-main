@@ -193,6 +193,12 @@ export default function ActiveDeliveryScreen() {
     if (orderId) {
       await setItem(`grabit_rider_step_${orderId}`, nextStep);
       patch(`/delivery/${orderId}/step`, { step: nextStep }).catch(() => {});
+      if (['EN_ROUTE', 'ARRIVED', 'OTP_DELIVERY'].includes(nextStep)) {
+        patch(`/orders/${orderId}/status`, { status: 'out_for_delivery' }).catch(() => {});
+      } else if (nextStep === 'COMPLETED') {
+        patch(`/orders/${orderId}/status`, { status: 'delivered' }).catch(() => {});
+      }
+      invalidateOrdersCache();
     }
   };
 
@@ -277,7 +283,9 @@ export default function ActiveDeliveryScreen() {
           } catch {}
         }
         await patch(`/orders/${orderId}/status`, { status: 'delivered', ...(riderId ? { delivery_agent_id: riderId } : {}) }).catch(() => {});
+        await patch(`/delivery/${orderId}/step`, { step: 'COMPLETED' }).catch(() => {});
         await removeItem(`grabit_rider_step_${orderId}`);
+        invalidateOrdersCache();
       }
 
       setCurrentStep('COMPLETED');

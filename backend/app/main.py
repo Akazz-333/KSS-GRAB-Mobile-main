@@ -408,9 +408,15 @@ def normalize_order_dict(o: dict) -> dict:
     if discount != 0.0:
         o["discount"] = discount
 
-    oid = str(o.get("id") or o.get("rawId") or "").strip()
+    # Prefer rawId (canonical UUID) when deriving the display alias.
+    # This matches the create_order() formula: GB-<first 6 hex chars of UUID, dashes stripped>.
+    # If rawId is a valid UUID, use it. Otherwise fall back to id.
+    raw_id_cand = str(o.get("rawId") or "").strip()
+    id_cand = str(o.get("id") or "").strip()
+    oid = raw_id_cand if (raw_id_cand and is_valid_uuid(raw_id_cand)) else (id_cand or raw_id_cand)
     if oid:
-        clean_hex = oid.replace("GB-", "").replace("gb-", "").strip()
+        # Strip dashes so UUID "a3f1e7b2-..." → "a3f1e7b2..." → first 6 → "A3F1E7"
+        clean_hex = oid.replace("-", "").replace("GB-", "").replace("gb-", "").strip()
         disp = f"GB-{clean_hex[:6].upper()}" if len(clean_hex) >= 6 else f"GB-{clean_hex.upper()}"
         o["order_number"] = disp
         o["orderNumber"] = disp
@@ -737,10 +743,14 @@ async def idempotent_order_upsert(order_id: str, patch_data: dict, fallback_sing
 
     return False
 
-ALLOWED_WORKFLOW_STEPS = {"REACH_STORE", "STORE_CHECKLIST", "EN_ROUTE", "OTP_DELIVERY"}
+ALLOWED_WORKFLOW_STEPS = {"REACH_STORE", "STORE_CHECKLIST", "EN_ROUTE", "ARRIVED", "OTP_DELIVERY", "COMPLETED", "DELIVERED"}
 WORKFLOW_STATUS_MAP = {
     "STORE_CHECKLIST": "picked_up",
     "EN_ROUTE": "out_for_delivery",
+    "ARRIVED": "out_for_delivery",
+    "OTP_DELIVERY": "out_for_delivery",
+    "COMPLETED": "delivered",
+    "DELIVERED": "delivered",
 }
 TERMINAL_ORDER_STATUSES = {"delivered", "cancelled", "failed_delivery", "returned"}
 
@@ -1157,7 +1167,7 @@ async def complete_profile(body: RegistrationRequest):
     if not body.full_name or not body.full_name.strip():
         raise HTTPException(400, "Full name is required.")
 
-    _VERIFIED_PHONES.pop(body.phone, None)
+    await cache_del(ver_key)
 
     # Double-check user doesn't already exist (race condition guard)
     rows = await store.get("profiles", {"phone": f"eq.{body.phone}"})
@@ -2529,25 +2539,32 @@ def normalize_status(raw_status: any) -> str:
         "delivering": "out_for_delivery",
         "picked_up": "out_for_delivery",
         "out_for_delivery": "out_for_delivery",
+        "on_way": "out_for_delivery",
+        "en_route": "out_for_delivery",
+        "dispatched": "out_for_delivery",
+        "arrived": "out_for_delivery",
         "ready": "ready_for_pickup",
         "ready_for_pickup": "ready_for_pickup",
         "packed": "ready_for_pickup",
         "cancel": "cancelled",
         "canceled": "cancelled",
+        "completed": "delivered",
+        "finished": "delivered",
+        "done": "delivered",
     }
     return alias_map.get(s, s)
 
 ALLOWED_STATUS_TRANSITIONS: dict[str, set[str]] = {
-    "placed": {"confirmed", "preparing", "ready_for_pickup", "cancelled"},
-    "pending": {"confirmed", "preparing", "ready_for_pickup", "cancelled"},
-    "confirmed": {"confirmed", "preparing", "ready_for_pickup", "cancelled"},
-    "preparing": {"preparing", "ready_for_pickup", "out_for_delivery", "cancelled"},
-    "ready_for_pickup": {"ready_for_pickup", "out_for_delivery", "cancelled"},
-    "out_for_delivery": {"delivered", "failed_delivery", "cancelled", "returned"},
-    "delivered": set(),
-    "cancelled": set(),
-    "returned": set(),
-    "failed_delivery": set(),
+    "placed": {"placed", "confirmed", "preparing", "ready_for_pickup", "out_for_delivery", "delivered", "cancelled"},
+    "pending": {"pending", "confirmed", "preparing", "ready_for_pickup", "out_for_delivery", "delivered", "cancelled"},
+    "confirmed": {"confirmed", "preparing", "ready_for_pickup", "out_for_delivery", "delivered", "cancelled"},
+    "preparing": {"preparing", "ready_for_pickup", "out_for_delivery", "delivered", "cancelled"},
+    "ready_for_pickup": {"ready_for_pickup", "out_for_delivery", "delivered", "cancelled"},
+    "out_for_delivery": {"out_for_delivery", "delivered", "failed_delivery", "cancelled", "returned"},
+    "delivered": {"delivered"},
+    "cancelled": {"cancelled"},
+    "returned": {"returned"},
+    "failed_delivery": {"failed_delivery"},
 }
 
 @router.patch("/orders/{order_id}/status")

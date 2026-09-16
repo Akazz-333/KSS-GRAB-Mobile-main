@@ -251,12 +251,17 @@ export default function RiderDashboardScreen() {
   // Order display values from real API
   const orderDisplay = activeOrder
     ? {
+<<<<<<< HEAD
         display_id: activeOrder.display_id || activeOrder.displayId || activeOrder.order_number || activeOrder.orderNumber,
         displayId: activeOrder.display_id || activeOrder.displayId || activeOrder.order_number || activeOrder.orderNumber,
         order_number: activeOrder.order_number || activeOrder.orderNumber,
         orderNumber: activeOrder.order_number || activeOrder.orderNumber,
         id: activeOrder.id || activeOrder.rawId || '—',
         rawId: activeOrder.id || activeOrder.rawId,
+=======
+        id: formatDisplayOrderId(activeOrder),
+        rawId: (activeOrder as any).rawId || activeOrder.id,
+>>>>>>> 7d19c6569bcec01d67be66bfd6b5109beb6196b8
         customerName: activeOrder.customer_name || 'Customer',
         customerPhone: activeOrder.customer_phone || '',
         storeName: activeOrder.store_name || 'Grabit Dark Store',

@@ -29,7 +29,7 @@ import { get } from '../services/api';
 export const MobileBottomNav: React.FC = () => {
   const router = useRouter();
   const pathname = usePathname();
-  const { role } = useAuth();
+  const { user, role } = useAuth();
   const { totalItems } = useCart();
   const [isMounted, setIsMounted] = React.useState(false);
   const [hasActiveDelivery, setHasActiveDelivery] = React.useState(false);
@@ -72,6 +72,11 @@ export const MobileBottomNav: React.FC = () => {
   }, [pathname]);
 
   if (!isMounted) return null;
+
+  // Do not render bottom nav bar if user is logged out (!user) or on login screen
+  if (!user || pathname.includes('login') || pathname === '/' || pathname === '/login' || pathname === '/customer/login') {
+    return null;
+  }
 
   // 1. If currently inside Admin Portal screens -> render dedicated AdminBottomNav
   if (pathname.startsWith('/admin')) {

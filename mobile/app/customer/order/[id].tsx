@@ -63,11 +63,11 @@ const ORDER_CYCLE_STAGES = [
 
 const getStepIndex = (statusStr?: string) => {
   const st = String(statusStr || '').toLowerCase();
-  if (st === 'delivered') return 4;
-  if (st === 'out_for_delivery' || st === 'out-for-delivery' || st === 'picked_up') return 3;
-  if (st === 'ready' || st === 'ready_for_pickup') return 2;
-  if (st === 'preparing' || st === 'confirmed') return 1;
-  if (st === 'cancelled') return -1;
+  if (st === 'delivered' || st === 'completed' || st === 'finished' || st === 'done') return 4;
+  if (st === 'out_for_delivery' || st === 'out-for-delivery' || st === 'picked_up' || st === 'on_way' || st === 'en_route' || st === 'delivering' || st === 'dispatched' || st === 'arrived') return 3;
+  if (st === 'ready' || st === 'ready_for_pickup' || st === 'packed') return 2;
+  if (st === 'preparing' || st === 'confirmed' || st === 'accepted' || st === 'packing' || st === 'processing') return 1;
+  if (st === 'cancelled' || st === 'rejected') return -1;
   return 0;
 };
 
@@ -280,14 +280,46 @@ export default function OrderDetailsPage() {
         }
       }
 
-      // 2. Fetch fresh from backend API
-      const fetchPath = phoneDigits ? `/orders/user/${phoneDigits}` : null;
-      if (fetchPath) {
-        const apiRes = await get<any[]>(fetchPath).catch(() => []);
+      // 2. Fetch fresh from backend API (user order list or direct single order)
+      let foundApi: any = null;
+      if (phoneDigits) {
+        const apiRes = await get<any[]>(`/orders/user/${phoneDigits}`).catch(() => []);
         if (Array.isArray(apiRes)) {
-          const foundApi = apiRes.find((o) => matchesOrder(o, id));
-          if (foundApi) {
-            setOrder(formatOrderData(foundApi));
+          foundApi = apiRes.find((o) => matchesOrder(o, id));
+        }
+      }
+      if (!foundApi && id) {
+        const singleRes = await get<any>(`/orders/${id}`).catch(() => null);
+        if (singleRes && (singleRes.id || singleRes.rawId)) {
+          foundApi = singleRes;
+        }
+      }
+
+      if (foundApi) {
+        const formattedApiOrder = formatOrderData(foundApi);
+        setOrder(formattedApiOrder);
+
+        // Persist updated status back to local storage so subsequent reads stay fresh
+        const storageKey = phoneDigits ? `grabit_orders_${phoneDigits}` : 'grabit_orders_guest';
+        const currentLocal = await getItem<any[]>(storageKey).catch(() => []);
+        if (Array.isArray(currentLocal)) {
+          let updated = false;
+          const updatedList = currentLocal.map((localItem) => {
+            if (matchesOrder(localItem, id)) {
+              updated = true;
+              return {
+                ...localItem,
+                status: foundApi.status || localItem.status,
+                estimated_time: foundApi.estimated_time || foundApi.eta || localItem.estimated_time,
+                delivery_agent_id: foundApi.delivery_agent_id || localItem.delivery_agent_id,
+                delivery_agent_name: foundApi.delivery_agent_name || localItem.delivery_agent_name,
+                delivery_agent_phone: foundApi.delivery_agent_phone || localItem.delivery_agent_phone,
+              };
+            }
+            return localItem;
+          });
+          if (updated) {
+            await setItem(storageKey, updatedList).catch(() => {});
           }
         }
       }
