@@ -87,7 +87,7 @@ const safeParseItems = (raw: any): any[] => {
   return [];
 };
 
-const formatOrderId = (id: any) => formatDisplayOrderId(id);
+const formatOrderId = (orderOrId: any) => formatDisplayOrderId(orderOrId);
 
 const deduplicateProducts = (list: any[]): any[] => {
   if (!Array.isArray(list)) return [];
@@ -553,10 +553,11 @@ export default function AdminPortalScreen({ initialTab }: { initialTab?: string 
       await patch(`/orders/${encodeURIComponent(orderId)}/status`, { status: newStatus });
       setOrders((prev) =>
         prev.map((o) =>
-          String(o.id || o.rawId) === String(orderId) ? { ...o, status: newStatus } : o
+          // Match by rawId (canonical UUID) first, then id as fallback
+          String(o.rawId || o.id) === String(orderId) ? { ...o, status: newStatus } : o
         )
       );
-      if (selectedOrderModal && String(selectedOrderModal.id || selectedOrderModal.rawId) === String(orderId)) {
+      if (selectedOrderModal && String(selectedOrderModal.rawId || selectedOrderModal.id) === String(orderId)) {
         setSelectedOrderModal((prev: any) => (prev ? { ...prev, status: newStatus } : null));
       }
       showToast(`Order #${formatOrderId(orderId)} marked as ${newStatus.toUpperCase()}`, 'success');
@@ -1238,9 +1239,7 @@ export default function AdminPortalScreen({ initialTab }: { initialTab?: string 
                   <Text style={{ padding: 12, color: '#94A3B8', fontSize: 13 }}>No recent order activities</Text>
                 ) : (
                   orders.slice(0, 5).map((item, idx) => {
-                    const cleanDisplayId = String(item.orderNumber || item.id || '').replace(/^GB-?/i, '');
-                    const formattedId = cleanDisplayId.length > 5 ? cleanDisplayId.slice(0, 6).toUpperCase() : cleanDisplayId.toUpperCase() || `ORD${idx}`;
-                    const displayId = `GB-${formattedId}`;
+                    const displayId = formatDisplayOrderId(item);
                     const custName = item.customer_name || item.customerName || item.name || 'Customer';
                     const amt = Number(item.total_amount || item.total || 0);
                     const st = String(item.status || 'placed').toLowerCase();
@@ -1248,9 +1247,9 @@ export default function AdminPortalScreen({ initialTab }: { initialTab?: string 
 
                     return (
                       <Pressable
-                        key={item.id || idx}
+                        key={String(item.id || item.rawId || idx)}
                         style={styles.activityItem}
-                        onPress={() => setSelectedOrderModal({ ...item, id: displayId, customer_name: custName, total_amount: amt, status: st })}
+                        onPress={() => setSelectedOrderModal(item)}
                       >
                         <View style={styles.activityIconBox}>
                           <ShoppingBag size={14} color="#8B5CF6" />
@@ -1294,15 +1293,13 @@ export default function AdminPortalScreen({ initialTab }: { initialTab?: string 
                   <Text style={{ padding: 12, color: '#94A3B8', fontSize: 13 }}>No active orders in live queue</Text>
                 ) : (
                   orders.slice(0, 5).map((ord, idx) => {
-                    const cleanDisplayId = String(ord.orderNumber || ord.id || '').replace(/^GB-?/i, '');
-                    const formattedId = cleanDisplayId.length > 5 ? cleanDisplayId.slice(0, 6).toUpperCase() : cleanDisplayId.toUpperCase() || `ORD${idx}`;
-                    const displayId = `GB-${formattedId}`;
+                    const displayId = formatDisplayOrderId(ord);
                     const custName = ord.customer_name || ord.customerName || ord.name || 'Customer';
                     const amt = Number(ord.total_amount || ord.total || 0);
                     const badge = String(ord.status || 'PLACED').toUpperCase();
 
                     return (
-                      <View key={ord.id || idx} style={styles.queueItemCard}>
+                      <View key={String(ord.id || ord.rawId || idx)} style={styles.queueItemCard}>
                         <View style={{ flex: 1 }}>
                           <View style={styles.queueHeaderRow}>
                             <Text style={styles.queueOrderId}>{displayId}</Text>
@@ -1317,7 +1314,8 @@ export default function AdminPortalScreen({ initialTab }: { initialTab?: string 
 
                         <Pressable
                           style={styles.viewOrderBtn}
-                          onPress={() => setSelectedOrderModal({ ...ord, id: displayId, customer_name: custName, total_amount: amt, status: ord.status || 'placed' })}
+                          onPress={() => setSelectedOrderModal(ord)}
+
                         >
                           <Text style={styles.viewOrderBtnText}>View</Text>
                         </Pressable>
@@ -1422,7 +1420,7 @@ export default function AdminPortalScreen({ initialTab }: { initialTab?: string 
                     return (
                       <View key={idx} style={styles.orderListItem}>
                         <View style={styles.orderListTop}>
-                          <Text style={styles.orderListId}>{formatOrderId(o.id || o.rawId)}</Text>
+                          <Text style={styles.orderListId}>{formatDisplayOrderId(o)}</Text>
                           <View style={[styles.statusBadgePill, { backgroundColor: badgeBg }]}>
                             <Text style={[styles.statusBadgeText, { color: badgeColor }]}>
                               {badgeText}
@@ -2379,7 +2377,7 @@ export default function AdminPortalScreen({ initialTab }: { initialTab?: string 
               <View>
                 <Text style={styles.modalSubHeader}>ORDER INSPECTION</Text>
                 <Text style={styles.modalHeaderTitle}>
-                  {formatOrderId(selectedOrderModal?.id || selectedOrderModal?.rawId)}
+                  {formatDisplayOrderId(selectedOrderModal)}
                 </Text>
               </View>
               <Pressable
@@ -2444,7 +2442,7 @@ export default function AdminPortalScreen({ initialTab }: { initialTab?: string 
                       <Pressable
                         style={[styles.modalActionBtn, { backgroundColor: '#FEF3C7' }]}
                         onPress={() =>
-                          handleUpdateOrderStatus(selectedOrderModal.id || selectedOrderModal.rawId, 'preparing')
+                          handleUpdateOrderStatus(selectedOrderModal.rawId || selectedOrderModal.id, 'preparing')
                         }
                       >
                         <Text style={[styles.modalActionText, { color: '#D97706' }]}>🍳 Mark Preparing</Text>
@@ -2456,7 +2454,7 @@ export default function AdminPortalScreen({ initialTab }: { initialTab?: string 
                         style={[styles.modalActionBtn, { backgroundColor: '#EFF6FF' }]}
                         onPress={() =>
                           handleUpdateOrderStatus(
-                            selectedOrderModal.id || selectedOrderModal.rawId,
+                            selectedOrderModal.rawId || selectedOrderModal.id,
                             'out_for_delivery'
                           )
                         }
@@ -2469,7 +2467,7 @@ export default function AdminPortalScreen({ initialTab }: { initialTab?: string 
                       <Pressable
                         style={[styles.modalActionBtn, { backgroundColor: '#ECFDF5' }]}
                         onPress={() =>
-                          handleUpdateOrderStatus(selectedOrderModal.id || selectedOrderModal.rawId, 'delivered')
+                          handleUpdateOrderStatus(selectedOrderModal.rawId || selectedOrderModal.id, 'delivered')
                         }
                       >
                         <Text style={[styles.modalActionText, { color: '#059669' }]}>✅ Mark Delivered</Text>
@@ -2480,7 +2478,7 @@ export default function AdminPortalScreen({ initialTab }: { initialTab?: string 
                       <Pressable
                         style={[styles.modalActionBtn, { backgroundColor: '#FEE2E2' }]}
                         onPress={() =>
-                          handleUpdateOrderStatus(selectedOrderModal.id || selectedOrderModal.rawId, 'cancelled')
+                          handleUpdateOrderStatus(selectedOrderModal.rawId || selectedOrderModal.id, 'cancelled')
                         }
                       >
                         <Text style={[styles.modalActionText, { color: '#DC2626' }]}>❌ Cancel Order</Text>

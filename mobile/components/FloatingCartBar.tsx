@@ -15,8 +15,8 @@ export const FloatingCartBar: React.FC = () => {
     setIsMounted(true);
   }, []);
 
-  // Hide on cart or checkout screens or until mounted
-  if (!isMounted || totalItems === 0 || pathname.includes('/cart') || pathname.includes('/checkout')) {
+  // Hide on cart, checkout, or login screens or until mounted
+  if (!isMounted || totalItems === 0 || pathname.includes('/cart') || pathname.includes('/checkout') || pathname.includes('login')) {
     return null;
   }
 

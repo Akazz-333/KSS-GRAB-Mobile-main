@@ -400,9 +400,15 @@ def normalize_order_dict(o: dict) -> dict:
     if discount != 0.0:
         o["discount"] = discount
 
-    oid = str(o.get("id") or o.get("rawId") or "").strip()
+    # Prefer rawId (canonical UUID) when deriving the display alias.
+    # This matches the create_order() formula: GB-<first 6 hex chars of UUID, dashes stripped>.
+    # If rawId is a valid UUID, use it. Otherwise fall back to id.
+    raw_id_cand = str(o.get("rawId") or "").strip()
+    id_cand = str(o.get("id") or "").strip()
+    oid = raw_id_cand if (raw_id_cand and is_valid_uuid(raw_id_cand)) else (id_cand or raw_id_cand)
     if oid:
-        clean_hex = oid.replace("GB-", "").replace("gb-", "").strip()
+        # Strip dashes so UUID "a3f1e7b2-..." → "a3f1e7b2..." → first 6 → "A3F1E7"
+        clean_hex = oid.replace("-", "").replace("GB-", "").replace("gb-", "").strip()
         disp = f"GB-{clean_hex[:6].upper()}" if len(clean_hex) >= 6 else f"GB-{clean_hex.upper()}"
         if not o.get("order_number"):
             o["order_number"] = disp
