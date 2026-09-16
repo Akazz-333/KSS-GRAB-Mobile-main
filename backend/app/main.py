@@ -198,8 +198,8 @@ async def cache_get(key: str):
 
 async def cache_set(key: str, value: any, ttl_seconds: int = 3600) -> bool:
     """Store JSON serializable value in Redis cache with TTL."""
-    val_str = json.dumps(value)
     try:
+        val_str = json.dumps(value)
         await _redis_exec_raw(["SET", key, val_str, "EX", ttl_seconds])
         _local_cache_fallback.pop(key, None)
         return True
@@ -629,7 +629,6 @@ async def get_valid_store_id(store_id: str | None = None) -> str | None:
 PG_ORDER_COLUMNS = {
     "id", "customer_id", "seller_id", "delivery_agent_id", "store_id",
     "delivery_address", "delivery_location", "status", "total", "created_at",
-    "workflow_step", "otp_verified", "otp_verified_at", "proof_photo_url",
 }
 OPTIONAL_DELIVERY_COLUMNS = {"workflow_step", "otp_verified", "otp_verified_at", "proof_photo_url"}
 
@@ -2866,6 +2865,7 @@ async def verify_delivery_otp(
         raise HTTPException(status_code=404, detail="Order not found")
 
     st = str(order.get("status") or "").lower()
+<<<<<<< HEAD
     if st == "cancelled":
         raise HTTPException(status_code=409, detail="Cannot verify OTP on a cancelled order")
 
@@ -2873,6 +2873,8 @@ async def verify_delivery_otp(
     if not order_assigned_to_rider(order, valid_keys):
         raise HTTPException(status_code=403, detail="Forbidden: You are not assigned to this order")
 
+=======
+>>>>>>> 953af6a9ab3325be0f9b1dd2f892f76a542fc98c
     if st in TERMINAL_ORDER_STATUSES and st == "delivered":
         return {
             "success": True,
@@ -2881,6 +2883,10 @@ async def verify_delivery_otp(
             "otp_verified": True,
             "verified": True
         }
+
+    valid_keys = await expand_rider_identity_keys(user)
+    if not order_assigned_to_rider(order, valid_keys):
+        raise HTTPException(status_code=403, detail="Forbidden: You are not assigned to this order")
 
     expected_otp = None
     if order.get("otp"):
