@@ -7,7 +7,7 @@
     "android": "node node_modules/expo/bin/cli run:android",
     "ios": "node node_modules/expo/bin/cli run:ios",
     "web": "node node_modules/expo/bin/cli start --web",
-    "build": "npx expo export -p web",
+    "build": "node node_modules/expo/bin/cli export -p web",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
