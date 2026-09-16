@@ -1,6 +1,6 @@
 {
-  "buildCommand": "npm run build --prefix frontend",
-  "outputDirectory": "frontend/dist",
+  "buildCommand": "npm run build",
+  "outputDirectory": "mobile/dist",
   "rewrites": [
     {
       "source": "/(.*)",

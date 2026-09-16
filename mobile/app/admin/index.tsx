@@ -89,6 +89,64 @@ const safeParseItems = (raw: any): any[] => {
 
 const formatOrderId = (id: any) => formatDisplayOrderId(id);
 
+const deduplicateProducts = (list: any[]): any[] => {
+  if (!Array.isArray(list)) return [];
+  const seenIds = new Set<string>();
+  const result: any[] = [];
+
+  list.forEach((p, idx) => {
+    if (!p) return;
+    const baseId = p.id !== undefined && p.id !== null ? String(p.id) : `prod_fallback_${idx}`;
+    let uniqueId = baseId;
+
+    if (seenIds.has(uniqueId)) {
+      uniqueId = `${baseId}_dup_${idx}`;
+    }
+
+    seenIds.add(uniqueId);
+    result.push({
+      ...p,
+      id: uniqueId,
+    });
+  });
+
+  return result;
+};
+
+const deduplicatePartners = (list: any[]): any[] => {
+  if (!Array.isArray(list)) return [];
+  const seen = new Set<string>();
+  const result: any[] = [];
+
+  list.forEach((p, idx) => {
+    if (!p) return;
+    const idKey = p.id ? String(p.id) : p.phone ? String(p.phone) : `partner_${idx}`;
+    if (!seen.has(idKey)) {
+      seen.add(idKey);
+      result.push(p);
+    }
+  });
+
+  return result;
+};
+
+const deduplicateOrders = (list: any[]): any[] => {
+  if (!Array.isArray(list)) return [];
+  const seen = new Set<string>();
+  const result: any[] = [];
+
+  list.forEach((o, idx) => {
+    if (!o) return;
+    const idKey = o.id ? String(o.id) : o.rawId ? String(o.rawId) : o.orderNumber ? String(o.orderNumber) : `ord_${idx}`;
+    if (!seen.has(idKey)) {
+      seen.add(idKey);
+      result.push(o);
+    }
+  });
+
+  return result;
+};
+
 // ── Chart Data Series for Time Periods ──
 const CHART_PERIODS_DATA: Record<
   string,
@@ -199,8 +257,8 @@ export default function AdminPortalScreen({ initialTab }: { initialTab?: string 
 
   // ── Data States ──
   const [orders, setOrders] = useState<any[]>([]);
-  const [partners, setPartners] = useState<any[]>(DEFAULT_PARTNERS);
-  const [products, setProducts] = useState<any[]>(baseProducts);
+  const [partners, setPartners] = useState<any[]>(() => deduplicatePartners(DEFAULT_PARTNERS));
+  const [products, setProducts] = useState<any[]>(() => deduplicateProducts(baseProducts));
   const [suggestionsList, setSuggestionsList] = useState<any[]>([]);
   const [ticketsList, setTicketsList] = useState<any[]>([]);
   const [categoryFilter, setCategoryFilter] = useState<string>('ALL');
@@ -288,39 +346,60 @@ export default function AdminPortalScreen({ initialTab }: { initialTab?: string 
         ]);
 
       if (Array.isArray(ordersRes)) {
-        setOrders(ordersRes);
+        setOrders(deduplicateOrders(ordersRes));
         if (ordersRes.length === 0) {
           await removeItem('grabit_orders').catch(() => { });
         }
       }
 
       if (Array.isArray(partnersRes) && partnersRes.length > 0) {
-        setPartners(partnersRes);
+        setPartners(deduplicatePartners(partnersRes));
       } else {
         const savedPartners = (await getItem<any[]>('grabit_partners')) || DEFAULT_PARTNERS;
-        setPartners(savedPartners);
+        setPartners(deduplicatePartners(savedPartners));
       }
 
       if (Array.isArray(productsRes) && productsRes.length > 0) {
         setProducts((prev) => {
-          const incomingMap = new Map<string, any>();
+          const currentList = prev && prev.length > 0 ? prev : baseProducts;
+          const bySku = new Map<string, any>();
+          const byName = new Map<string, any>();
+          const byId = new Map<string, any>();
+
           productsRes.forEach((p: any) => {
-            if (p.id) incomingMap.set(String(p.id), p);
-            if (p.sku) incomingMap.set(String(p.sku), p);
-            if (p.name) incomingMap.set(String(p.name).toLowerCase().trim(), p);
+            if (p.sku) bySku.set(String(p.sku), p);
+            if (p.name) byName.set(String(p.name).toLowerCase().trim(), p);
+            if (p.id !== undefined && p.id !== null) byId.set(String(p.id), p);
           });
 
-          const currentList = prev && prev.length > 0 ? prev : baseProducts;
+          const matchedBackendIds = new Set<string>();
+
           const updated = currentList.map((p) => {
-            const match =
-              incomingMap.get(String(p.id)) ||
-              (p.sku ? incomingMap.get(String(p.sku)) : undefined) ||
-              incomingMap.get(String(p.name).toLowerCase().trim());
+            const pSku = p.sku ? String(p.sku) : '';
+            const pName = p.name ? String(p.name).toLowerCase().trim() : '';
+            const pId = p.id !== undefined && p.id !== null ? String(p.id) : '';
+
+            let match = pSku ? bySku.get(pSku) : undefined;
+            if (!match && pName) {
+              match = byName.get(pName);
+            }
+            if (!match && pId && byId.has(pId)) {
+              const cand = byId.get(pId);
+              const candName = (cand.name || '').toLowerCase().trim();
+              if (!candName || !pName || candName === pName) {
+                match = cand;
+              }
+            }
+
             if (match) {
+              if (match.id !== undefined && match.id !== null) {
+                matchedBackendIds.add(String(match.id));
+              }
               const mergedImg = getValidImage(match.image || match.image_url || p.image || p.image_url);
               return {
                 ...p,
                 ...match,
+                id: p.id,
                 image: mergedImg,
                 image_url: mergedImg,
                 stock: match.stock_quantity !== undefined ? match.stock_quantity : (match.stock !== undefined ? match.stock : p.stock),
@@ -334,20 +413,24 @@ export default function AdminPortalScreen({ initialTab }: { initialTab?: string 
             };
           });
 
-          // Add any new products from backend that don't match existing
           const existingIds = new Set(updated.map((p) => String(p.id)));
           productsRes.forEach((p: any) => {
-            if (p.id && !existingIds.has(String(p.id))) {
-              const validImg = getValidImage(p.image || p.image_url);
-              updated.push({
-                ...p,
-                image: validImg,
-                image_url: validImg,
-              });
+            if (p.id !== undefined && p.id !== null) {
+              const pIdStr = String(p.id);
+              if (!matchedBackendIds.has(pIdStr) && !existingIds.has(pIdStr)) {
+                const validImg = getValidImage(p.image || p.image_url);
+                updated.push({
+                  ...p,
+                  id: pIdStr,
+                  image: validImg,
+                  image_url: validImg,
+                });
+                existingIds.add(pIdStr);
+              }
             }
           });
 
-          return updated;
+          return deduplicateProducts(updated);
         });
       }
 
@@ -604,7 +687,7 @@ export default function AdminPortalScreen({ initialTab }: { initialTab?: string 
     try {
       await post('/users/', payload);
     } catch { }
-    setPartners((prev) => [payload, ...prev]);
+    setPartners((prev) => deduplicatePartners([payload, ...prev]));
     setShowAddPartnerModal(false);
     setNewPartnerName('');
     setNewPartnerPhone('');
@@ -617,7 +700,7 @@ export default function AdminPortalScreen({ initialTab }: { initialTab?: string 
     try {
       await del(`/users/${pid}`);
     } catch { }
-    setPartners((prev) => prev.filter((p) => (p.id || p.phone) !== pid));
+    setPartners((prev) => deduplicatePartners(prev.filter((p) => (p.id || p.phone) !== pid)));
     setPartnerToDeactivate(null);
     showToast('Partner deactivated successfully', 'success');
   };
@@ -641,13 +724,13 @@ export default function AdminPortalScreen({ initialTab }: { initialTab?: string 
 
     try {
       await post('/products/', newP);
-      setProducts((prev) => [newP, ...prev]);
+      setProducts((prev) => deduplicateProducts([newP, ...prev]));
       setShowAddProductModal(false);
       setNewProdName('');
       setNewProdPrice('');
       showToast(`Product "${newP.name}" added to catalog!`, 'success');
     } catch {
-      setProducts((prev) => [newP, ...prev]);
+      setProducts((prev) => deduplicateProducts([newP, ...prev]));
       setShowAddProductModal(false);
       showToast(`Product "${newP.name}" added (Local)`, 'success');
     }
@@ -669,7 +752,7 @@ export default function AdminPortalScreen({ initialTab }: { initialTab?: string 
     } catch { }
 
     setProducts((prev) =>
-      prev.map((p) => (p.id === targetId ? { ...p, ...updated } : p))
+      deduplicateProducts(prev.map((p) => (p.id === targetId ? { ...p, ...updated } : p)))
     );
     setEditingProductModal(null);
     showToast('Product updated successfully!', 'success');
@@ -685,7 +768,7 @@ export default function AdminPortalScreen({ initialTab }: { initialTab?: string 
           try {
             await del(`/products/${id}`);
           } catch { }
-          setProducts((prev) => prev.filter((p) => p.id !== id));
+          setProducts((prev) => deduplicateProducts(prev.filter((p) => p.id !== id)));
           showToast(`"${name}" deleted`, 'success');
         },
       },
@@ -2062,7 +2145,7 @@ export default function AdminPortalScreen({ initialTab }: { initialTab?: string 
                       'https://res.cloudinary.com/hmx3azp6/image/upload/c_fill,w_300,q_auto,f_auto/grabit_media/fresh_groceries_basket_only.png'
                     );
                     return (
-                      <View key={p.id || idx} style={styles.productGridCard}>
+                      <View key={String(p.id || `prod_${idx}`)} style={styles.productGridCard}>
                         {/* Image Container with Live Badge */}
                         <View style={styles.productGridImgBox}>
                           <Image
@@ -2151,7 +2234,7 @@ export default function AdminPortalScreen({ initialTab }: { initialTab?: string 
                   </View>
                 ) : (
                   suggestionsList.map((sug, idx) => (
-                    <View key={idx} style={styles.suggestionCard}>
+                    <View key={String(sug.id || `sug_${sug.product_name || 'item'}_${idx}`)} style={styles.suggestionCard}>
                       <View style={styles.cardHeaderRow}>
                         <Text style={styles.sugTitle}>{sug.product_name}</Text>
                         <View style={styles.sugCatPill}>
