@@ -336,10 +336,15 @@ export default function CheckoutPage() {
     console.timeEnd('Payment');
 
     // 2. Order Payload Preparation
-    const orderNumber = `GB-${Date.now().toString(36).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`;
-    const rawId = (typeof crypto !== 'undefined' && (crypto as any).randomUUID) 
-      ? (crypto as any).randomUUID() 
+    // Generate the canonical UUID first, then derive the display ID from it.
+    // This MUST match the backend algorithm: GB-<first 6 hex chars of UUID (dashes stripped)>
+    // so that Customer, Seller, Rider, and Admin all show the same Order ID.
+    const rawId = (typeof crypto !== 'undefined' && (crypto as any).randomUUID)
+      ? (crypto as any).randomUUID()
       : `${Date.now().toString(16).padStart(8, '0')}-0000-4000-8000-${Math.floor(Math.random() * 1e12).toString(16).padStart(12, '0')}`;
+    // Derive display alias from UUID — same formula as backend normalize_order_dict()
+    const orderNumber = `GB-${rawId.replace(/-/g, '').slice(0, 6).toUpperCase()}`;
+
     const orderItems = cart.map((item) => ({
       id: item.product.id,
       product_id: item.product.id,

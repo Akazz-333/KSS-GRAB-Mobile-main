@@ -2149,3 +2149,11 @@
 {"_e":"metro:instantiate","_t":1789545729839,"atlas":false,"workers":6,"host":null,"port":null}
 {"_e":"metro:bundling:started","_t":1789545731638,"id":"1","platform":"web","environment":null,"entry":"mobile\\node_modules\\expo-router\\entry.js"}
 {"_e":"metro:bundling:done","_t":1789545758995,"id":"1","total":2451,"ms":27357.4215}
+{"_e":"root:init","_t":1789547799338,"format":"v0-jsonl","version":"57.0.24"}
+{"_e":"env:mode","_t":1789547799850,"nodeEnv":"production","babelEnv":"production","mode":"production"}
+{"_e":"env:load","_t":1789547799854,"mode":"production","files":[],"env":{}}
+{"_e":"devserver:start","_t":1789547799899,"mode":"production","web":true,"baseUrl":"","asyncRoutes":false,"routerRoot":"../..\\..\\app","serverComponents":false,"serverActions":false,"serverRendering":false,"apiRoutes":false,"exporting":true}
+{"_e":"metro:config","_t":1789547803726,"serverRoot":"../..\\..\\..","projectRoot":"../..\\..","exporting":true,"flags":{"autolinkingModuleResolution":true,"serverActions":false,"serverComponents":false,"reactCompiler":false,"optimizeGraph":false,"treeshaking":false,"logbox":false}}
+{"_e":"metro:instantiate","_t":1789547804699,"atlas":false,"workers":6,"host":null,"port":null}
+{"_e":"metro:bundling:started","_t":1789547806657,"id":"1","platform":"web","environment":null,"entry":"mobile\\node_modules\\expo-router\\entry.js"}
+{"_e":"metro:bundling:done","_t":1789547875804,"id":"1","total":2451,"ms":69145.519}

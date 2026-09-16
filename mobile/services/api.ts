@@ -432,20 +432,18 @@ export async function api<T = any>(path: string, options: RequestInit = {}): Pro
         return null;
       }
 
-      // Direct Supabase Cloud REST Fallback for POST/PATCH when local backend is unreachable
-      if (cleanPath.startsWith('/orders') || cleanPath.startsWith('/store') || cleanPath.startsWith('/seller')) {
-        const reqBody = typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
-        if (options.method === 'POST') {
-          const cloudPost = await postDirectToSupabase<T>('orders', reqBody);
-          if (cloudPost) return cloudPost;
-        } else if (options.method === 'PATCH') {
+      // Direct Supabase Cloud REST Fallback for PATCH (status updates) ONLY when backend is unreachable.
+      // NOTE: We intentionally do NOT fall back to direct Supabase POST for order creation,
+      // because postDirectToSupabase generates a brand-new UUID if called, creating a duplicate
+      // order row with a different ID. The order is already saved to local AsyncStorage by
+      // checkout.tsx before this API call, so if the backend is unreachable the user can retry.
+      if (options.method === 'PATCH') {
+        if (cleanPath.startsWith('/orders') || cleanPath.startsWith('/store') || cleanPath.startsWith('/seller')) {
+          const reqBody = typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
           const cloudPatch = await patchDirectToSupabase<T>(cleanPath, reqBody);
           if (cloudPatch) return cloudPatch;
           return { success: true, status: reqBody?.status } as unknown as T;
         }
-      }
-
-      if (options.method === 'PATCH' || options.method === 'POST') {
         return { success: true } as unknown as T;
       }
 

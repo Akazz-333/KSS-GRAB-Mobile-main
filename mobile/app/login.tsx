@@ -28,6 +28,8 @@ export default function LoginScreen() {
   const router = useRouter();
   const { loginWithPhone, saveSession, skipLogin } = useAuth();
   const { showToast } = useToast();
+  const phoneInputRef = React.useRef<any>(null);
+  const otpInputRef = React.useRef<any>(null);
 
   const [phoneDigits, setPhoneDigits] = useState('');
   // Steps: 'phone' | 'otp' | 'profile'
@@ -348,11 +350,12 @@ export default function LoginScreen() {
             {/* STEP 1: PHONE NUMBER INPUT */}
             {step === 'phone' && (
               <View style={styles.formSection}>
-                <View
+                <Pressable
                   style={[
                     styles.phoneInputGroup,
                     isInputFocused && styles.phoneInputGroupFocused,
                   ]}
+                  onPress={() => phoneInputRef.current?.focus()}
                 >
                   <Text style={styles.floatingLabel}>Enter Phone Number</Text>
                   <View style={styles.phoneInputRow}>
@@ -362,6 +365,7 @@ export default function LoginScreen() {
                     </View>
                     <View style={styles.verticalDivider} />
                     <TextInput
+                      ref={phoneInputRef}
                       style={styles.phoneTextInput}
                       keyboardType="phone-pad"
                       maxLength={10}
@@ -371,10 +375,9 @@ export default function LoginScreen() {
                       placeholderTextColor="#94A3B8"
                       onFocus={() => setIsInputFocused(true)}
                       onBlur={() => setIsInputFocused(false)}
-                      autoFocus
                     />
                   </View>
-                </View>
+                </Pressable>
 
                 {/* Continue Button */}
                 <Pressable
@@ -434,9 +437,10 @@ export default function LoginScreen() {
                   </View>
                 )}
 
-                <View>
+                <Pressable onPress={() => otpInputRef.current?.focus()}>
                   <Text style={styles.inputLabel}>Enter 6-Digit OTP</Text>
                   <TextInput
+                    ref={otpInputRef}
                     style={styles.otpInput}
                     keyboardType="number-pad"
                     maxLength={6}
@@ -444,9 +448,8 @@ export default function LoginScreen() {
                     onChangeText={(text) => setOtp(text.replace(/\D/g, '').slice(0, 6))}
                     placeholder="· · · · · ·"
                     placeholderTextColor="#94A3B8"
-                    autoFocus
                   />
-                </View>
+                </Pressable>
 
                 <Pressable
                   style={({ pressed }) => [
@@ -515,7 +518,6 @@ export default function LoginScreen() {
                     onChangeText={setName}
                     placeholder="Enter your full name"
                     placeholderTextColor="#94A3B8"
-                    autoFocus
                   />
                 </View>
 

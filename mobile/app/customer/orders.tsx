@@ -212,11 +212,13 @@ export default function OrdersPage() {
       : o.time || '01:53 PM';
 
     const displayId = formatDisplayOrderId(o);
+    const canonicalId = String(o.rawId || o.id || '');
 
     return {
       ...o,
-      id: displayId,
-      rawId: o.rawId || o.id,
+      // Preserve canonical UUID — do NOT overwrite with display alias
+      id: canonicalId,
+      rawId: canonicalId,
       displayId: displayId,
       orderNumber: displayId,
       placedDateText: `Placed on ${dateStr}, ${timeStr} • ${(o.payment_method || 'UPI').toUpperCase()}`,
@@ -415,7 +417,7 @@ export default function OrdersPage() {
         );
       }
     });
-    showToast(`Added items from Order #${order.displayId || order.id} to cart! 🛒`, 'success');
+    showToast(`Added items from Order #${formatDisplayOrderId(order)} to cart! 🛒`, 'success');
     if (selectedOrderModal) setSelectedOrderModal(null);
     router.push('/customer/cart' as any);
   };
@@ -453,7 +455,7 @@ export default function OrdersPage() {
         await setItem(storageKey, updateList(localUserOrders || [])).catch(() => {});
       }
 
-      showToast(`Order #${cancellingOrder.displayId || cancellingOrder.id} has been cancelled.`, 'info');
+      showToast(`Order #${formatDisplayOrderId(cancellingOrder)} has been cancelled.`, 'info');
       setCancellingOrder(null);
       if (selectedOrderModal) setSelectedOrderModal(null);
     } catch {

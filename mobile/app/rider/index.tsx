@@ -249,7 +249,8 @@ export default function RiderDashboardScreen() {
   // Order display values from real API
   const orderDisplay = activeOrder
     ? {
-        id: activeOrder.orderNumber || activeOrder.id || '—',
+        id: formatDisplayOrderId(activeOrder),
+        rawId: (activeOrder as any).rawId || activeOrder.id,
         customerName: activeOrder.customer_name || 'Customer',
         customerPhone: activeOrder.customer_phone || '',
         storeName: activeOrder.store_name || 'Grabit Dark Store',

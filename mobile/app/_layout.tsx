@@ -1,5 +1,5 @@
 import React from 'react';
-import { Stack } from 'expo-router';
+import { Stack, usePathname } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { AuthProvider } from '../context/AuthContext';
@@ -15,6 +15,9 @@ import { View, StyleSheet, LogBox } from 'react-native';
 LogBox.ignoreLogs(['Cannot connect to Expo CLI', 'No route named', 'AIRMap', 'Require cycle:']);
 
 export default function RootLayout() {
+  const pathname = usePathname();
+  const isLoginPage = !pathname || pathname === '/' || pathname === '/login' || pathname === '/customer/login' || pathname.includes('login');
+
   return (
     <SafeAreaProvider>
       <AuthProvider>
@@ -24,7 +27,7 @@ export default function RootLayout() {
               <CartProvider>
                 <SafeAreaView style={styles.container} edges={['top']}>
                   <StatusBar style="dark" />
-                  <View style={styles.content}>
+                  <View style={[styles.content, isLoginPage && styles.noPaddingBottom]}>
                     <Stack screenOptions={{ headerShown: false, animation: 'none' }}>
                       <Stack.Screen name="index" />
                       <Stack.Screen name="login" />
@@ -81,5 +84,8 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
     paddingBottom: 60,
+  },
+  noPaddingBottom: {
+    paddingBottom: 0,
   },
 });

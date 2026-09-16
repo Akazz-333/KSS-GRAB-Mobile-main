@@ -5,6 +5,7 @@ import { Bell, Bike, ShieldCheck, DollarSign, Zap, CheckCheck, Trash2 } from 'lu
 import { useToast } from '../../context/ToastContext';
 import { get } from '../../services/api';
 import { getItem, setItem } from '../../services/storage';
+import { formatDisplayOrderId } from '../../utils/orderUtils';
 
 interface RiderNotif {
   id: string;
@@ -36,7 +37,7 @@ export default function RiderNotificationsScreen() {
       // 1. Check active assigned orders
       const activeOrders = Array.isArray(activeRes) ? activeRes : (activeRes?.orders || []);
       for (const ord of activeOrders) {
-        const oid = ord.orderNumber || ord.id || 'Active';
+        const oid = formatDisplayOrderId(ord);
         const st = String(ord.status || '').toUpperCase();
         if (st !== 'DELIVERED' && st !== 'CANCELLED') {
           const nId = `active-${oid}`;
@@ -54,7 +55,7 @@ export default function RiderNotificationsScreen() {
       // 2. Check recent completed delivery history
       const histOrders = Array.isArray(histRes) ? histRes : (histRes?.orders || []);
       for (const h of histOrders.slice(0, 10)) {
-        const oid = h.orderNumber || h.id || 'TRIP';
+        const oid = formatDisplayOrderId(h);
         const total = Number(h.total_amount || h.total || 190);
         const payout = Math.max(30, Math.round(total * 0.3));
         const nId = `payout-${oid}`;
