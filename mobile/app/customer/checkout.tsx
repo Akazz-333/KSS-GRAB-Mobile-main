@@ -336,10 +336,10 @@ export default function CheckoutPage() {
     console.timeEnd('Payment');
 
     // 2. Order Payload Preparation
-    const orderNumber = `GB-${Date.now().toString(36).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`;
     const rawId = (typeof crypto !== 'undefined' && (crypto as any).randomUUID) 
       ? (crypto as any).randomUUID() 
       : `${Date.now().toString(16).padStart(8, '0')}-0000-4000-8000-${Math.floor(Math.random() * 1e12).toString(16).padStart(12, '0')}`;
+    const orderNumber = formatDisplayOrderId(rawId);
     const orderItems = cart.map((item) => ({
       id: item.product.id,
       product_id: item.product.id,

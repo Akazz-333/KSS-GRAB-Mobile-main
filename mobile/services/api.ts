@@ -139,8 +139,8 @@ export async function fetchDirectFromSupabase<T>(path: string): Promise<T | null
       }
     } else if (route === 'categories' || route === 'categories/') {
       endpoint = `${SUPABASE_REST_URL}/categories?select=*&order=name`;
-    } else if (route === 'orders' || route === 'orders/' || route === 'store/orders' || route === 'seller/orders' || route.startsWith('orders/user/')) {
-      endpoint = `${SUPABASE_REST_URL}/orders?select=*,profiles!orders_customer_id_fkey(id,full_name,phone)&order=created_at.desc&limit=100`;
+    } else if (route === 'orders' || route === 'orders/' || route === 'store/orders' || route === 'seller/orders' || route.startsWith('orders/user/') || route.startsWith('delivery/')) {
+      endpoint = `${SUPABASE_REST_URL}/orders?select=*,profiles!orders_customer_id_fkey(id,full_name,phone)&status=in.(delivered,completed)&order=created_at.desc&limit=100`;
     } else if (route === 'seller/profile' || route === 'seller/profile/') {
       return {
         store_name: 'GrabIt SuperMart (Indiranagar)',
@@ -181,10 +181,10 @@ export async function fetchDirectFromSupabase<T>(path: string): Promise<T | null
           const enriched = data.map((o: any) => {
             const p = o.profiles && typeof o.profiles === 'object' ? o.profiles : {};
             const rawName = String(o.customer_name || p.full_name || o.name || '').trim();
-            const cName = (!rawName || rawName.toLowerCase() === 'customer' || rawName.toLowerCase() === 'guest') ? 'Akash' : rawName;
+            const cName = rawName || 'Customer User';
             const rawPhone = String(o.customer_phone || p.phone || '').replace(/\D/g, '');
             const last10 = rawPhone.length >= 10 ? rawPhone.slice(-10) : rawPhone;
-            const cPhone = last10 ? `+91 ${last10}` : '+91 9360843281';
+            const cPhone = last10 ? `+91 ${last10}` : (o.customer_phone || '');
             return {
               ...o,
               customer_name: cName,
@@ -282,7 +282,7 @@ export async function patchDirectToSupabase<T>(path: string, payload: any): Prom
       let orderId = parts[1];
       let targetUuid = orderId;
       if (!isUuid(orderId)) {
-        // Query recent orders from Supabase to find matching real UUID
+        // Query recent orders from Supabase to find exact matching real UUID
         try {
           const fetchRes = await fetch(`${SUPABASE_REST_URL}/orders?select=id,status&order=created_at.desc&limit=50`, {
             headers: {
@@ -293,7 +293,11 @@ export async function patchDirectToSupabase<T>(path: string, payload: any): Prom
           if (fetchRes.ok) {
             const rows = await fetchRes.json();
             if (Array.isArray(rows) && rows.length > 0) {
-              const matched = rows.find((r: any) => isUuid(r.id));
+              const cleanSearch = orderId.replace(/^gb-/i, '').replace(/^#/, '').toLowerCase();
+              const matched = rows.find((r: any) => {
+                const rId = String(r.id || '').toLowerCase();
+                return rId === cleanSearch || rId.startsWith(cleanSearch) || rId.endsWith(cleanSearch);
+              });
               if (matched) targetUuid = matched.id;
             }
           }
@@ -398,7 +402,7 @@ export async function api<T = any>(path: string, options: RequestInit = {}): Pro
 
       if (response.status === 204) return null;
       if ((response.status === 401 || response.status === 403) && isGet) {
-        if (cleanPath.startsWith('/products') || cleanPath.startsWith('/categories') || cleanPath.startsWith('/orders') || cleanPath.startsWith('/store') || cleanPath.startsWith('/seller')) {
+        if (cleanPath.startsWith('/products') || cleanPath.startsWith('/categories') || cleanPath.startsWith('/orders') || cleanPath.startsWith('/store') || cleanPath.startsWith('/seller') || cleanPath.startsWith('/delivery')) {
           return await fetchDirectFromSupabase<T>(cleanPath);
         }
         return null;
@@ -407,7 +411,7 @@ export async function api<T = any>(path: string, options: RequestInit = {}): Pro
       const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        if (isGet && (cleanPath.startsWith('/products') || cleanPath.startsWith('/categories') || cleanPath.startsWith('/orders') || cleanPath.startsWith('/store') || cleanPath.startsWith('/seller'))) {
+        if (isGet && (cleanPath.startsWith('/products') || cleanPath.startsWith('/categories') || cleanPath.startsWith('/orders') || cleanPath.startsWith('/store') || cleanPath.startsWith('/seller') || cleanPath.startsWith('/delivery'))) {
           const cloudData = await fetchDirectFromSupabase<T>(cleanPath);
           if (cloudData) return cloudData;
         }
@@ -425,7 +429,7 @@ export async function api<T = any>(path: string, options: RequestInit = {}): Pro
       if (isGet) {
         const stale = apiCache.get(cleanPath);
         if (stale) return stale.data as T;
-        if (cleanPath.startsWith('/products') || cleanPath.startsWith('/categories') || cleanPath.startsWith('/orders') || cleanPath.startsWith('/store') || cleanPath.startsWith('/seller')) {
+        if (cleanPath.startsWith('/products') || cleanPath.startsWith('/categories') || cleanPath.startsWith('/orders') || cleanPath.startsWith('/store') || cleanPath.startsWith('/seller') || cleanPath.startsWith('/delivery')) {
           const cloudData = await fetchDirectFromSupabase<T>(cleanPath);
           if (cloudData) return cloudData;
         }

@@ -118,12 +118,10 @@ export default function SellerOrdersScreen() {
 
       const custPhone = String(o.customer_phone || o.phone || '').replace(/\D/g, '');
       const last10 = custPhone.length >= 10 ? custPhone.slice(-10) : custPhone;
-      const formattedPhone = last10 ? `+91 ${last10}` : '+91 9360843281';
+      const formattedPhone = last10 ? `+91 ${last10}` : (o.customer_phone || '');
 
       const rawCustName = String(o.customer_name || o.customerName || o.name || '').trim();
-      const validCustName = (!rawCustName || rawCustName.toLowerCase() === 'customer' || rawCustName.toLowerCase() === 'guest')
-        ? 'Akash'
-        : rawCustName;
+      const validCustName = rawCustName || 'Customer User';
 
       if (normalizedItems.length === 0) {
         normalizedItems = [{
@@ -947,8 +945,8 @@ export default function SellerOrdersScreen() {
                     <View style={styles.riderBannerRow}>
                       <Bike size={13} color="#0066FF" style={{ marginRight: 5 }} />
                       <Text style={styles.riderBannerText} numberOfLines={1}>
-                        Rider: <Text style={styles.riderNameBold}>{item.rider_name || 'Karthik Rider'}</Text>
-                        <Text style={{ color: COLORS.textSecondary }}> (+91 {item.rider_phone || '9876543210'})</Text>
+                        Rider: <Text style={styles.riderNameBold}>{item.rider_name || 'Delivery Partner'}</Text>
+                        <Text style={{ color: COLORS.textSecondary }}>{item.rider_phone ? ` (+91 ${item.rider_phone})` : ''}</Text>
                       </Text>
                     </View>
                   )}
