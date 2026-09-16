@@ -731,6 +731,20 @@ def rider_payout_amount(order: dict) -> int:
     total = float(order.get("total_amount") or order.get("total") or 0)
     return max(30, round(total * 0.3))
 
+def get_order_local_date_str(order: dict, local_tz=None) -> str:
+    if local_tz is None:
+        local_tz = get_store_local_now().tzinfo
+    ts_raw = str(order.get("completedAtISO") or order.get("delivered_at") or order.get("completed_at") or order.get("timestamp") or order.get("created_at") or "").strip()
+    if not ts_raw:
+        return ""
+    try:
+        dt = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(local_tz).strftime("%Y-%m-%d")
+    except Exception:
+        return ts_raw[:10]
+
 async def compute_rider_today_earnings(rider: dict) -> dict:
     today_str = get_store_local_now().strftime("%Y-%m-%d")
     keys = {str(rider.get("id") or "").strip(), str(rider.get("phone") or "").strip()}
@@ -761,9 +775,10 @@ async def compute_rider_today_earnings(rider: dict) -> dict:
                     combined[oid] = o
     earnings = 0
     count = 0
+    local_tz = get_store_local_now().tzinfo
     for o in combined.values():
-        ts = str(o.get("completedAtISO") or o.get("delivered_at") or o.get("completed_at") or o.get("created_at") or "")
-        if ts[:10] != today_str:
+        local_date_str = get_order_local_date_str(o, local_tz)
+        if local_date_str != today_str:
             continue
         count += 1
         earnings += rider_payout_amount(o)
@@ -1680,13 +1695,24 @@ async def get_user_orders(
     combined = []
     seen = set()
     for o in raw_list:
-        oid = o.get("id") or o.get("rawId")
-        if oid and oid not in seen:
-            seen.add(oid)
-            order_dict = normalize_order_dict(dict(o))
-            if not order_dict.get("items") or len(order_dict.get("items") or []) == 0:
-                order_dict["items"] = await resolve_order_items(order_dict, None, o_items_map)
-            combined.append(order_dict)
+        if not isinstance(o, dict):
+            continue
+        oid = str(o.get("id") or o.get("rawId") or "").strip()
+        raw_id = str(o.get("rawId") or o.get("id") or "").strip()
+        clean_id = oid.replace("GB-", "").replace("gb-", "").strip().lower()
+        clean_raw = raw_id.replace("GB-", "").replace("gb-", "").strip().lower()
+        if not clean_id and not clean_raw:
+            continue
+        if clean_id in seen or clean_raw in seen:
+            continue
+        seen.add(clean_id)
+        if clean_raw:
+            seen.add(clean_raw)
+        seen.add(oid.lower())
+        order_dict = normalize_order_dict(dict(o))
+        if not order_dict.get("items") or len(order_dict.get("items") or []) == 0:
+            order_dict["items"] = await resolve_order_items(order_dict, None, o_items_map)
+        combined.append(order_dict)
 
     # Sort orders newest first
     combined.sort(key=lambda x: str(x.get("created_at") or ""), reverse=True)
@@ -1849,13 +1875,24 @@ async def orders(
     # Combine Redis cache, Supabase DB, and local file storage so NO order is ever missed
     all_sources = (cached_orders if isinstance(cached_orders, list) else []) + db_orders + local_file_orders
     for o in all_sources:
-        oid = o.get("id") or o.get("rawId") or o.get("order_number")
-        if oid and oid not in seen:
-            seen.add(oid)
-            order_dict = normalize_order_dict(dict(o))
-            if not order_dict.get("items") or len(order_dict.get("items") or []) == 0:
-                order_dict["items"] = await resolve_order_items(order_dict, None, o_items_map)
-            combined.append(order_dict)
+        if not isinstance(o, dict):
+            continue
+        oid = str(o.get("id") or o.get("rawId") or o.get("order_number") or "").strip()
+        raw_id = str(o.get("rawId") or o.get("id") or "").strip()
+        clean_id = oid.replace("GB-", "").replace("gb-", "").strip().lower()
+        clean_raw = raw_id.replace("GB-", "").replace("gb-", "").strip().lower()
+        if not clean_id and not clean_raw:
+            continue
+        if clean_id in seen or clean_raw in seen:
+            continue
+        seen.add(clean_id)
+        if clean_raw:
+            seen.add(clean_raw)
+        seen.add(oid.lower())
+        order_dict = normalize_order_dict(dict(o))
+        if not order_dict.get("items") or len(order_dict.get("items") or []) == 0:
+            order_dict["items"] = await resolve_order_items(order_dict, None, o_items_map)
+        combined.append(order_dict)
 
     combined.sort(key=lambda x: str(x.get("created_at") or ""), reverse=True)
 
@@ -2569,6 +2606,7 @@ async def order_status(
             if can_cust_phone and order_can_phone and can_cust_phone != order_can_phone:
                 raise HTTPException(403, "Cannot modify another customer's order")
         elif user_role in ("delivery_agent", "delivery_partner", "rider"):
+            await assert_rider_is_online(user)
             assigned_rider_id = str(single.get("delivery_agent_id") or "") if (single and isinstance(single, dict)) else ""
             target_rider_id = str(body.delivery_agent_id or "")
             if assigned_rider_id and assigned_rider_id != user_id and target_rider_id != user_id:
@@ -2613,6 +2651,12 @@ async def order_status(
                             logger.warning(f"Failed to restore stock for product {pid} on order cancellation: {err}")
             await cache_del("cache:products:all:all:none")
 
+    effective_rider_id = (
+        body.delivery_agent_id
+        or (user_id if user_role in ("delivery_agent", "delivery_partner", "rider") else None)
+        or (single.get("delivery_agent_id") if (single and isinstance(single, dict)) else None)
+    )
+
     # 1. Update single order cache immediately
     async def _sync_single():
         if single and isinstance(single, dict):
@@ -2620,8 +2664,8 @@ async def order_status(
             if target_status == "delivered":
                 single["delivered_at"] = now_utc_iso
                 single["completedAtISO"] = now_utc_iso
-            if body.delivery_agent_id:
-                single["delivery_agent_id"] = body.delivery_agent_id
+            if effective_rider_id:
+                single["delivery_agent_id"] = effective_rider_id
             await cache_set(f"cloud:order:{order_id}", single, ttl_seconds=86400 * 30)
         return True
 
@@ -2642,8 +2686,8 @@ async def order_status(
                                     if target_status == "delivered":
                                         o["delivered_at"] = now_utc_iso
                                         o["completedAtISO"] = now_utc_iso
-                                    if body.delivery_agent_id:
-                                        o["delivery_agent_id"] = body.delivery_agent_id
+                                    if effective_rider_id:
+                                        o["delivery_agent_id"] = effective_rider_id
                             await cache_set(cust_key, cust_orders, ttl_seconds=86400 * 30)
         return True
 
@@ -2660,8 +2704,8 @@ async def order_status(
                     if target_status == "delivered":
                         o["delivered_at"] = now_utc_iso
                         o["completedAtISO"] = now_utc_iso
-                    if body.delivery_agent_id:
-                        o["delivery_agent_id"] = body.delivery_agent_id
+                    if effective_rider_id:
+                        o["delivery_agent_id"] = effective_rider_id
                     found = True
                 updated_list.append(o)
             if not found and single and isinstance(single, dict):
@@ -2670,8 +2714,8 @@ async def order_status(
                 if target_status == "delivered":
                     single_copy["delivered_at"] = now_utc_iso
                     single_copy["completedAtISO"] = now_utc_iso
-                if body.delivery_agent_id:
-                    single_copy["delivery_agent_id"] = body.delivery_agent_id
+                if effective_rider_id:
+                    single_copy["delivery_agent_id"] = effective_rider_id
                 updated_list.insert(0, single_copy)
             await cache_set("cloud:orders_list", updated_list[:100], ttl_seconds=86400 * 30)
         return True
@@ -2685,8 +2729,8 @@ async def order_status(
     if target_status == "delivered":
         patch_data["delivered_at"] = now_utc_iso
         patch_data["completed_at"] = now_utc_iso
-    if body.delivery_agent_id:
-        patch_data["delivery_agent_id"] = body.delivery_agent_id
+    if effective_rider_id:
+        patch_data["delivery_agent_id"] = effective_rider_id
 
     await idempotent_order_upsert(order_id, patch_data, fallback_single=single, op_name="order_status")
 
@@ -2694,7 +2738,7 @@ async def order_status(
     async def _bg_persist_db_and_disk():
         try:
             if target_status in ("delivered", "failed_delivery", "returned"):
-                rider_id = body.delivery_agent_id
+                rider_id = effective_rider_id or body.delivery_agent_id
                 if not rider_id and single and isinstance(single, dict):
                     rider_id = single.get("delivery_agent_id")
                 if not rider_id:
@@ -2707,12 +2751,17 @@ async def order_status(
                         delivered_rec["status"] = "delivered"
                         delivered_rec["delivered_at"] = now_utc_iso
                         delivered_rec["completedAtISO"] = now_utc_iso
-                        alias_keys = {str(rider_id)}
+                        if effective_rider_id:
+                            delivered_rec["delivery_agent_id"] = effective_rider_id
+                        alias_keys = set(await expand_rider_identity_keys(user)) if user else {str(rider_id)}
+                        alias_keys.add(str(rider_id))
                         for r_key in alias_keys:
+                            if not r_key:
+                                continue
                             h_cache = await cache_get(f"cloud:rider_history:{r_key}") or []
                             if not isinstance(h_cache, list):
                                 h_cache = []
-                            h_cache = [delivered_rec] + [h for h in h_cache if not is_same_order_id(h.get("id"), order_id)]
+                            h_cache = [delivered_rec] + [h for h in h_cache if not is_same_order_id(h.get("id") or h.get("orderId"), order_id)]
                             await cache_set(f"cloud:rider_history:{r_key}", h_cache, ttl_seconds=86400 * 30)
                     await redis_exec(["DEL", f"cloud:rider_active:{rider_id}"])
                     await redis_publish("orders:delivery", {"order_id": order_id, "rider_id": str(rider_id), "status": target_status})
@@ -3559,22 +3608,24 @@ async def delivery_active_orders(include_offer: bool = Query(False), user=Depend
 async def delivery_history(user=Depends(require_roles("delivery_agent"))):
     rider_id = user.get("sub")
     try:
-        agent_ids = [str(rider_id)]
+        identity_keys = list(await expand_rider_identity_keys(user))
+        if str(rider_id) not in identity_keys:
+            identity_keys.append(str(rider_id))
 
         cache_key = f"cloud:rider_history:{rider_id}"
         cached = await cache_get(cache_key)
         if isinstance(cached, list) and cached:
             return cached
 
-        history_pg_uuids = [k for k in agent_ids if is_valid_uuid(k)]
-        if history_pg_uuids:
+        db_orders = []
+        try:
             db_orders = await store.get("orders", {
-                "delivery_agent_id": f"in.({','.join(history_pg_uuids)})",
+                "delivery_agent_id": f"in.({','.join(identity_keys)})",
                 "status": "eq.delivered",
                 "order": "created_at.desc",
                 "limit": 200
             })
-        else:
+        except Exception:
             db_orders = []
         if not isinstance(db_orders, list):
             db_orders = []
@@ -3582,19 +3633,50 @@ async def delivery_history(user=Depends(require_roles("delivery_agent"))):
         if not db_orders:
             redis_queue = await cache_get("cloud:orders_list") or []
             if isinstance(redis_queue, list):
-                agent_phone = user.get("phone") or ""
+                agent_phone = str(user.get("phone") or "").strip()
                 db_orders = [
                     o for o in redis_queue 
                     if str(o.get("status")).lower() == "delivered" and (
-                        str(o.get("delivery_agent_id")) == str(rider_id) or 
-                        str(o.get("agent_id")) == str(rider_id) or
-                        str(o.get("assigned_agent_id")) == str(rider_id) or
-                        (agent_phone and str(o.get("delivery_agent_phone")) == str(agent_phone))
+                        str(o.get("delivery_agent_id")) in identity_keys or 
+                        str(o.get("agent_id")) in identity_keys or
+                        str(o.get("assigned_agent_id")) in identity_keys or
+                        (agent_phone and str(o.get("delivery_agent_phone")) == agent_phone)
                     )
                 ]
 
+        if not db_orders:
+            try:
+                o_map = load_orders_items()
+                agent_phone = str(user.get("phone") or "").strip()
+                for o_item in o_map.values():
+                    if isinstance(o_item, dict):
+                        o_obj = o_item.get("order") if isinstance(o_item.get("order"), dict) else o_item
+                        st = str(o_obj.get("status") or "").lower()
+                        agent_in_obj = str(o_obj.get("delivery_agent_id") or o_obj.get("agent_id") or "")
+                        if st == "delivered" and (agent_in_obj in identity_keys or (agent_phone and str(o_obj.get("delivery_agent_phone")) == agent_phone)):
+                            db_orders.append(o_obj)
+            except Exception:
+                pass
+
+        deduped = []
+        seen = set()
         for o in db_orders:
+            if not isinstance(o, dict):
+                continue
             normalize_order_dict(o)
+            oid = str(o.get("id") or o.get("rawId") or o.get("order_id") or "").strip()
+            raw_id = str(o.get("rawId") or o.get("id") or "").strip()
+            clean_id = oid.replace("GB-", "").replace("gb-", "").strip().lower()
+            clean_raw = raw_id.replace("GB-", "").replace("gb-", "").strip().lower()
+            if not clean_id and not clean_raw:
+                continue
+            if clean_id in seen or clean_raw in seen:
+                continue
+            seen.add(clean_id)
+            if clean_raw:
+                seen.add(clean_raw)
+            seen.add(oid.lower())
+
             if not o.get("items"):
                 cached_single = await cache_get(f"cloud:order:{o.get('id')}")
                 if cached_single and isinstance(cached_single, dict) and cached_single.get("items"):
@@ -3603,6 +3685,9 @@ async def delivery_history(user=Depends(require_roles("delivery_agent"))):
                         o["customer_name"] = cached_single.get("customer_name")
                 else:
                     o["items"] = [{"id": 1, "name": "Express Grocery Item", "qty": 1, "price": float(o.get("total_amount") or 50)}]
+            deduped.append(o)
+
+        db_orders = deduped
 
         if db_orders:
             await redis_exec(["SET", cache_key, json.dumps(db_orders), "EX", 30])
@@ -4056,6 +4141,7 @@ async def reject_delivery(order_id: str, user=Depends(require_roles("delivery_ag
 
 @router.post("/delivery/{order_id}/accept")
 async def accept_delivery(order_id: str, user=Depends(require_roles("delivery_agent"))):
+    await assert_rider_is_online(user)
     rider_id = str(user.get("sub") or "").strip()
     user_phone = str(user.get("phone") or "").strip()
     now = get_store_local_now()
@@ -4210,6 +4296,9 @@ async def update_delivery_step(
     now_iso = datetime.now(timezone.utc).isoformat()
     rider_id = str(user.get("sub") or user.get("id") or "").strip()
 
+    if user.get("role") in ("delivery_agent", "rider", "delivery_partner"):
+        await assert_rider_is_online(user)
+
     # 1. Update single order cache
     order_data = await cache_get(f"cloud:order:{clean_id}")
     if not order_data or not isinstance(order_data, dict):
@@ -4321,6 +4410,9 @@ async def verify_delivery_otp(
     entered_otp = str(payload.get("otp") or "").strip()
     proof_photo_url = payload.get("proof_photo_url")
     clean_id = str(order_id).strip()
+
+    if user.get("role") in ("delivery_agent", "rider", "delivery_partner"):
+        await assert_rider_is_online(user)
 
     if not entered_otp:
         raise HTTPException(400, "OTP is required")
@@ -4892,6 +4984,36 @@ def compute_rider_presence_status(rider: dict, store_settings: dict) -> str:
         return "LATE"
     else:
         return "ABSENT"
+
+async def assert_rider_is_online(user: dict):
+    """
+    Enforces that a delivery agent is punched in / online before taking delivery actions.
+    Raises HTTP 403 Forbidden if the rider is offline or punched out.
+    """
+    valid_keys = await expand_rider_identity_keys(user)
+    users = load_users_db()
+    rider_user = None
+    for u in users:
+        if isinstance(u, dict) and u.get("role") in ("delivery_agent", "rider", "delivery_partner"):
+            uid = str(u.get("id") or u.get("phone") or "").strip()
+            uph = str(u.get("phone") or "").strip()
+            if uid in valid_keys or uph in valid_keys:
+                rider_user = u
+                break
+
+    if not rider_user:
+        rider_user = user
+
+    store_settings = await get_store_settings()
+    presence = compute_rider_presence_status(rider_user, store_settings)
+    is_online = bool(rider_user.get("is_online", False))
+    agent_st = str(rider_user.get("agent_status") or "").upper()
+
+    if not is_online or presence == "ABSENT" or agent_st in ("UNAVAILABLE", "OFFLINE"):
+        raise HTTPException(
+            status_code=403,
+            detail="Please Punch In first to start this delivery."
+        )
 
 ORDERS_ITEMS_FILE = DATA_DIR / "orders_items.json"
 # Use threading.Lock (not asyncio.Lock) to avoid event-loop affinity issues in tests
@@ -5662,11 +5784,11 @@ async def get_rider_delivery_analytics(rider_id: str, user=Depends(require_roles
     day_before_count = 0
     month_count = 0
 
+    local_tz = now.tzinfo
     for o in all_delivered:
-        ts = str(o.get("completedAtISO") or o.get("delivered_at") or o.get("completed_at") or o.get("timestamp") or o.get("created_at") or "")
-        if not ts:
+        date_part = get_order_local_date_str(o, local_tz)
+        if not date_part:
             continue
-        date_part = ts[:10]
         if date_part == today_str:
             today_count += 1
         if date_part == yesterday_str:

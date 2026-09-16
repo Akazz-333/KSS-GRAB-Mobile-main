@@ -409,7 +409,7 @@ export default function OrderDetailsPage() {
         trackerStep: -1,
       }));
 
-      showToast(`Order #${order.displayId || id} has been cancelled.`, 'info');
+      showToast(`Order #${formatDisplayOrderId(order || id)} has been cancelled.`, 'info');
       setCancelModalOpen(false);
     } catch {
       showToast('Failed to cancel order. Please try again.', 'error');
@@ -452,7 +452,7 @@ export default function OrderDetailsPage() {
           </Pressable>
           <View>
             <Text style={styles.topNavSub}>ORDER TRACKING</Text>
-            <Text style={styles.topNavTitle}>{order?.displayId || `Order #${id}`}</Text>
+            <Text style={styles.topNavTitle}>Order #{formatDisplayOrderId(order || id)}</Text>
           </View>
         </View>
 
@@ -1002,7 +1002,7 @@ export default function OrderDetailsPage() {
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.cancelModalTitle}>
-                  Cancel Order #{order?.displayId || id}?
+                  Cancel Order #{formatDisplayOrderId(order || id)}?
                 </Text>
                 <Text style={styles.cancelModalSub}>
                   Are you sure you want to cancel this order? Once cancelled, this action cannot be undone.

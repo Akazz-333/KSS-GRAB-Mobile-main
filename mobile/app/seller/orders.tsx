@@ -774,7 +774,15 @@ export default function SellerOrdersScreen() {
 
   const filteredOrders = React.useMemo(() => {
     return orders.filter((order) => {
-      const matchesTab = activeTab === 'ALL' || order.status === activeTab;
+      const isTerminal = order.status === 'DELIVERED' || order.status === 'CANCELLED';
+      let matchesTab = false;
+      if (activeTab === 'ALL') {
+        // Main active queue shows in-progress orders only!
+        matchesTab = !isTerminal;
+      } else {
+        matchesTab = order.status === activeTab;
+      }
+
       const q = searchQuery.toLowerCase();
       const matchesSearch =
         order.id.toLowerCase().includes(q) ||
@@ -891,7 +899,7 @@ export default function SellerOrdersScreen() {
       ) : (
         <FlatList
           data={filteredOrders}
-          keyExtractor={(item) => item.rawId || item.id}
+          keyExtractor={(item, index) => `${item.rawId || item.id || 'seller_order'}_${index}`}
           style={{ flex: 1 }}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}

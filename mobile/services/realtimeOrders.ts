@@ -39,6 +39,22 @@ function getSseEndpoint(role: RealtimeRole): string {
   return '/orders/stream';
 }
 
+function deduplicateOrderList(list: any[]): any[] {
+  if (!Array.isArray(list)) return [];
+  const seen = new Set<string>();
+  const deduped: any[] = [];
+  for (const item of list) {
+    if (!item) continue;
+    const rawKey = String(item.id || item.rawId || item.orderId || item.order_id || item.orderNumber || '').trim();
+    const cleanKey = rawKey.toLowerCase().replace('gb-', '');
+    if (cleanKey && !seen.has(cleanKey)) {
+      seen.add(cleanKey);
+      deduped.push(item);
+    }
+  }
+  return deduped;
+}
+
 export function useRealtimeOrders(role: RealtimeRole): UseRealtimeOrdersResult {
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -77,7 +93,7 @@ export function useRealtimeOrders(role: RealtimeRole): UseRealtimeOrdersResult {
         });
       }
 
-      setOrders(fetched);
+      setOrders(deduplicateOrderList(fetched));
       setError(null);
       initialFetchDoneRef.current = true;
     } catch (e: any) {
@@ -114,7 +130,7 @@ export function useRealtimeOrders(role: RealtimeRole): UseRealtimeOrdersResult {
                 return st !== 'delivered' && st !== 'cancelled' && st !== 'failed_delivery';
               });
             }
-            setOrders(processed);
+            setOrders(deduplicateOrderList(processed));
             setLoading(false);
             setError(null);
             setIsLive(true);

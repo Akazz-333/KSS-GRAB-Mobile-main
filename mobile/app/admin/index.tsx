@@ -14,6 +14,7 @@ import {
   Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { formatDisplayOrderId } from '../../utils/orderUtils';
 import { getCloudinaryUrl } from '../../services/cloudinary';
 import Svg, {
   Path,
@@ -86,18 +87,7 @@ const safeParseItems = (raw: any): any[] => {
   return [];
 };
 
-const formatOrderId = (id: any) => {
-  if (!id) return 'GB-1001';
-  let str = String(id).trim();
-  if (str.startsWith('#')) str = str.slice(1);
-  if (/^GB-?\d+$/i.test(str)) return str.replace(/^GB-?/i, 'GB-');
-  if (str.includes('-') && str.length > 15) {
-    const parts = str.split('-');
-    return `GB-${parts[parts.length - 1].slice(-5).toUpperCase()}`;
-  }
-  if (str.length > 10) return `GB-${str.slice(-5).toUpperCase()}`;
-  return str.startsWith('GB-') ? str : `GB-${str}`;
-};
+const formatOrderId = (id: any) => formatDisplayOrderId(id);
 
 // ── Chart Data Series for Time Periods ──
 const CHART_PERIODS_DATA: Record<
@@ -288,7 +278,7 @@ export default function AdminPortalScreen({ initialTab }: { initialTab?: string 
     try {
       const [ordersRes, partnersRes, productsRes, storeSettingsRes, presenceRes, suggestionsRes, leavesRes] =
         await Promise.all([
-          get('/orders/').catch(() => null),
+          get('/store/orders').catch(() => get('/orders/').catch(() => null)),
           get('/admin/partners').catch(() => get('/users/').catch(() => null)),
           get('/products/').catch(() => null),
           get('/store/settings').catch(() => null),
@@ -720,20 +710,20 @@ export default function AdminPortalScreen({ initialTab }: { initialTab?: string 
         (o.customer_name && o.customer_name.toLowerCase().includes(q)) ||
         (o.delivery_address && o.delivery_address.toLowerCase().includes(q));
 
-      const st = String(o.status || '').toLowerCase();
+      const st = String(o.status || o.order_status || o.workflow_step || '').toLowerCase();
       const matchStatus =
         statusFilter === 'ALL'
           ? true
           : statusFilter === 'PLACED'
-            ? st === 'placed'
+            ? st === 'placed' || st === 'pending' || st === 'created'
             : statusFilter === 'PREPARING'
-              ? st === 'preparing' || st === 'confirmed'
+              ? st === 'preparing' || st === 'confirmed' || st === 'accepted' || st === 'reach_store'
               : statusFilter === 'READY'
-                ? st === 'ready' || st === 'ready_for_pickup'
+                ? st === 'ready' || st === 'ready_for_pickup' || st === 'packed' || st === 'store_checklist'
                 : statusFilter === 'DELIVERING'
-                  ? st === 'out_for_delivery' || st === 'delivering'
+                  ? st === 'out_for_delivery' || st === 'delivering' || st === 'on_road' || st === 'en_route' || st === 'arrived' || st === 'otp_delivery'
                   : statusFilter === 'DELIVERED'
-                    ? st === 'delivered'
+                    ? st === 'delivered' || st === 'completed' || st === 'delivered_to_customer' || st === 'done'
                     : true;
 
       return matchSearch && matchStatus;
@@ -1316,10 +1306,11 @@ export default function AdminPortalScreen({ initialTab }: { initialTab?: string 
                   </View>
                 ) : (
                   filteredOrders.map((o, idx) => {
-                    const st = String(o.status || 'placed').toLowerCase();
-                    const isDelivered = st === 'delivered';
-                    const isOut = st === 'out_for_delivery';
-                    const isReady = st === 'ready';
+                    const st = String(o.status || o.order_status || o.workflow_step || 'placed').toLowerCase();
+                    const isDelivered = st === 'delivered' || st === 'completed' || st === 'delivered_to_customer' || st === 'done';
+                    const isOut = st === 'out_for_delivery' || st === 'delivering' || st === 'on_road' || st === 'en_route' || st === 'arrived' || st === 'otp_delivery';
+                    const isReady = st === 'ready' || st === 'ready_for_pickup' || st === 'packed' || st === 'store_checklist';
+                    const isPreparing = st === 'preparing' || st === 'confirmed' || st === 'accepted' || st === 'reach_store';
 
                     let badgeBg = '#EFF6FF';
                     let badgeColor = '#0071E3';

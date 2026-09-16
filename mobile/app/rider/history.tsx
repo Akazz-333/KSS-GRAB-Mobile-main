@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useFocusEffect } from 'expo-router';
 import { get } from '../../services/api';
 import {
   View,
@@ -31,6 +32,7 @@ interface HistoryRecord {
   orderId: string;
   time: string;
   date: string;
+  timestamp: number;
   store: string;
   locality: string;
   distanceKm: number;
@@ -51,17 +53,31 @@ import { formatDisplayOrderId } from '../../utils/orderUtils';
 function mapOrderToHistory(o: any, idx: number): HistoryRecord {
   const total = Number(o.total_amount || o.total || o.totalAmount || 0);
   const payout = Math.max(30, Math.round(total * 0.3));
-  const createdAt = o.created_at ? new Date(o.created_at) : new Date();
+  const completionStr = o.delivered_at || o.completedAtISO || o.completed_at || o.updated_at || o.created_at;
+  const completedDate = completionStr ? new Date(completionStr) : new Date();
   const now = new Date();
-  const diffDays = Math.floor((now.getTime() - createdAt.getTime()) / (1000 * 60 * 60 * 24));
-  const dateLabel = diffDays === 0 ? 'Today' : diffDays === 1 ? 'Yesterday' : 'This Week';
-  const timeLabel = createdAt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+
+  // Exact calendar date comparison in local timezone
+  const isToday =
+    completedDate.getFullYear() === now.getFullYear() &&
+    completedDate.getMonth() === now.getMonth() &&
+    completedDate.getDate() === now.getDate();
+
+  const yesterdayDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  const isYesterday =
+    completedDate.getFullYear() === yesterdayDate.getFullYear() &&
+    completedDate.getMonth() === yesterdayDate.getMonth() &&
+    completedDate.getDate() === yesterdayDate.getDate();
+
+  const dateLabel = isToday ? 'Today' : isYesterday ? 'Yesterday' : 'This Week';
+  const timeLabel = completedDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
   const items = Array.isArray(o.items || o.order_items) ? (o.items || o.order_items) : [];
   return {
-    id: String(idx + 1),
+    id: String(o.id || o.rawId || idx + 1),
     orderId: formatDisplayOrderId(o),
     time: timeLabel,
     date: dateLabel,
+    timestamp: completedDate.getTime(),
     store: o.store_name || 'Grabit Dark Store',
     locality: o.delivery_address || o.address || 'Delivery Address',
     distanceKm: Number(o.distance_km || 2.0),
@@ -87,12 +103,26 @@ export default function RiderHistoryScreen() {
   const fetchHistory = useCallback(async () => {
     try {
       const res = await get('/delivery/history').catch(() => null);
-      if (res && Array.isArray(res) && res.length > 0) {
-        setHistoryData(res.map(mapOrderToHistory));
-      } else if (res && Array.isArray(res?.orders) && res.orders.length > 0) {
-        setHistoryData(res.orders.map(mapOrderToHistory));
+      let rawList: any[] = [];
+      if (res && Array.isArray(res)) {
+        rawList = res;
+      } else if (res && Array.isArray(res?.orders)) {
+        rawList = res.orders;
+      }
+      if (rawList.length > 0) {
+        const mapped = rawList.map(mapOrderToHistory);
+        const seen = new Set<string>();
+        const deduped: HistoryRecord[] = [];
+        for (const item of mapped) {
+          const key = (item.id || item.orderId).toLowerCase().replace('gb-', '');
+          if (key && !seen.has(key)) {
+            seen.add(key);
+            deduped.push(item);
+          }
+        }
+        deduped.sort((a, b) => b.timestamp - a.timestamp);
+        setHistoryData(deduped);
       } else {
-        // No history yet — show empty state
         setHistoryData([]);
       }
     } catch {
@@ -106,6 +136,12 @@ export default function RiderHistoryScreen() {
   useEffect(() => {
     fetchHistory();
   }, [fetchHistory]);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchHistory();
+    }, [fetchHistory])
+  );
 
   const filteredData = historyData.filter((item) => {
     if (selectedFilter === 'Today') return item.date === 'Today';
@@ -180,7 +216,7 @@ export default function RiderHistoryScreen() {
       {/* Delivery Logs List */}
       <FlatList
         data={filteredData}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item, index) => `${item.id || item.orderId || 'hist'}_${index}`}
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
         refreshControl={

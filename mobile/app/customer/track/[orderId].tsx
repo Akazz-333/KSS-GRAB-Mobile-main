@@ -19,6 +19,7 @@ import { wsClient } from '../../../services/websocket';
 import { Order } from '../../../types';
 import { useAuth } from '../../../context/AuthContext';
 import { useToast } from '../../../context/ToastContext';
+import { formatDisplayOrderId } from '../../../utils/orderUtils';
 import { LoadingView } from '../../../components/LoadingView';
 import { COLORS, SPACING, SHADOWS } from '../../../constants/theme';
 import { ArrowLeft, Bike, Phone, MapPin, CheckCircle2, Clock } from 'lucide-react-native';
@@ -143,33 +144,53 @@ export default function OrderTrackingPage() {
       <ScrollView contentContainerStyle={styles.scrollContent}>
         {/* Map View showing Rider Marker & Destination */}
         <View style={styles.mapContainer}>
-          <MapView
-            style={styles.map}
-            initialRegion={{
-              latitude: (riderCoords.latitude + destCoords.latitude) / 2,
-              longitude: (riderCoords.longitude + destCoords.longitude) / 2,
-              latitudeDelta: 0.015,
-              longitudeDelta: 0.015,
-            }}
-          >
-            <Marker coordinate={riderCoords} title="Delivery Rider">
-              <View style={styles.riderMarker}>
-                <Bike size={20} color="#FFFFFF" />
-              </View>
-            </Marker>
+          {Platform.OS === 'web' || !MapView ? (
+            React.createElement('iframe', {
+              title: 'Live Order Tracking Map',
+              width: '100%',
+              height: '100%',
+              style: {
+                border: 0,
+                width: '100%',
+                height: '100%',
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+              },
+              loading: 'lazy',
+              src: `https://maps.google.com/maps?q=${riderCoords.latitude},${riderCoords.longitude}&z=15&output=embed`,
+            })
+          ) : (
+            <MapView
+              style={styles.map}
+              initialRegion={{
+                latitude: (riderCoords.latitude + destCoords.latitude) / 2,
+                longitude: (riderCoords.longitude + destCoords.longitude) / 2,
+                latitudeDelta: 0.015,
+                longitudeDelta: 0.015,
+              }}
+            >
+              <Marker coordinate={riderCoords} title="Delivery Rider">
+                <View style={styles.riderMarker}>
+                  <Bike size={20} color="#FFFFFF" />
+                </View>
+              </Marker>
 
-            <Marker coordinate={destCoords} title="Your Delivery Address">
-              <View style={styles.destMarker}>
-                <MapPin size={20} color={COLORS.primaryDark} />
-              </View>
-            </Marker>
+              <Marker coordinate={destCoords} title="Your Delivery Address">
+                <View style={styles.destMarker}>
+                  <MapPin size={20} color={COLORS.primaryDark} />
+                </View>
+              </Marker>
 
-            <Polyline
-              coordinates={[riderCoords, destCoords]}
-              strokeColor={COLORS.primary}
-              strokeWidth={4}
-            />
-          </MapView>
+              <Polyline
+                coordinates={[riderCoords, destCoords]}
+                strokeColor={COLORS.primary}
+                strokeWidth={4}
+              />
+            </MapView>
+          )}
         </View>
 
         {/* ETA & Status Banner */}
@@ -203,7 +224,7 @@ export default function OrderTrackingPage() {
 
         {/* Order Items Summary */}
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>Order #{displayOrder.id}</Text>
+          <Text style={styles.cardTitle}>Order #{formatDisplayOrderId(displayOrder)}</Text>
           {displayOrder.items.map((i, idx) => (
             <View key={idx} style={styles.itemRow}>
               <Text style={styles.itemName}>

@@ -15,6 +15,8 @@ import {
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { useToast } from '../../context/ToastContext';
+import { useRiderDuty } from '../../context/RiderDutyContext';
+import { formatDisplayOrderId } from '../../utils/orderUtils';
 import { get, patch, uploadImage, invalidateOrdersCache } from '../../services/api';
 import { useRealtimeOrders } from '../../services/realtimeOrders';
 import { getItem, setItem, removeItem } from '../../services/storage';
@@ -41,7 +43,7 @@ import {
   Target,
   RefreshCw,
 } from 'lucide-react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 
 // Platform-safe import of react-native-maps to prevent AIRMap render errors on Web
 let MapView: any = null;
@@ -86,6 +88,17 @@ function buildChecklistItems(apiItems: any[]): OrderItem[] {
 export default function ActiveDeliveryScreen() {
   const router = useRouter();
   const { showToast } = useToast();
+  const { isOnline, isDutyLoading, refreshDutyStatus } = useRiderDuty();
+
+  useFocusEffect(
+    useCallback(() => {
+      refreshDutyStatus();
+      if (!isDutyLoading && !isOnline) {
+        showToast('Please Punch In first to start this delivery.', 'error');
+        router.replace('/rider/attendance' as any);
+      }
+    }, [isOnline, isDutyLoading, refreshDutyStatus])
+  );
 
   const [currentStep, setCurrentStep] = useState<StepState>('REACH_STORE');
   const [proofPhoto, setProofPhoto] = useState<string | null>(null);
@@ -170,6 +183,11 @@ export default function ActiveDeliveryScreen() {
   }, [refreshActiveOrders]);
 
   const advanceStep = async (nextStep: StepState) => {
+    if (!isOnline) {
+      showToast('Please Punch In first to start this delivery.', 'error');
+      router.replace('/rider/attendance' as any);
+      return;
+    }
     setCurrentStep(nextStep);
     const orderId = order?.rawId || order?.id;
     if (orderId) {
@@ -205,6 +223,11 @@ export default function ActiveDeliveryScreen() {
   };
 
   const handleCompleteDelivery = async () => {
+    if (!isOnline) {
+      showToast('Please Punch In first to start this delivery.', 'error');
+      router.replace('/rider/attendance' as any);
+      return;
+    }
     if (!proofPhoto) {
       showToast('Please take a photo proof of delivery first', 'error');
       return;
@@ -245,12 +268,20 @@ export default function ActiveDeliveryScreen() {
         }
 
         // Mark order as delivered in backend
-        await patch(`/orders/${orderId}/status`, { status: 'delivered' }).catch(() => {});
+        const riderUserStr = await getItem<string>('grabit_user').catch(() => null);
+        let riderId = '';
+        if (riderUserStr) {
+          try {
+            const parsed = typeof riderUserStr === 'string' ? JSON.parse(riderUserStr) : riderUserStr;
+            riderId = parsed?.id || parsed?.sub || '';
+          } catch {}
+        }
+        await patch(`/orders/${orderId}/status`, { status: 'delivered', ...(riderId ? { delivery_agent_id: riderId } : {}) }).catch(() => {});
         await removeItem(`grabit_rider_step_${orderId}`);
       }
 
       setCurrentStep('COMPLETED');
-      const orderNum = order?.orderNumber || order?.id || 'Order';
+      const orderNum = formatDisplayOrderId(order);
       showToast(`${orderNum} Delivered! ₹${payout} credited to your balance.`, 'success');
     } catch {
       showToast('Delivery completion failed. Please retry.', 'error');
@@ -680,13 +711,41 @@ export default function ActiveDeliveryScreen() {
         </View>
         )}
 
+        {/* PUNCH-IN ENFORCEMENT BANNER */}
+        {!isOnline && (
+          <Pressable
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              backgroundColor: '#FFF7ED',
+              borderColor: '#FDBA74',
+              borderWidth: 1,
+              borderRadius: 14,
+              padding: 14,
+              marginBottom: SPACING.md,
+            }}
+            onPress={() => router.push('/rider/attendance' as any)}
+          >
+            <AlertTriangle size={20} color="#C2410C" style={{ marginRight: 10 }} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 13, fontWeight: '800', color: '#9A3412' }}>
+                YOU ARE CURRENTLY PUNCHED OUT / OFFLINE
+              </Text>
+              <Text style={{ fontSize: 11, color: '#C2410C', marginTop: 2, fontWeight: '500' }}>
+                Tap here to Punch In to advance delivery steps or verify OTP.
+              </Text>
+            </View>
+            <ChevronRight size={18} color="#C2410C" />
+          </Pressable>
+        )}
+
         {/* Task Details Main Card */}
         {!loadingOrder && order && (
         <View style={styles.card}>
           <View style={styles.orderHeader}>
             <View style={{ width: '100%' }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-                <Text style={styles.orderId}>Order #{order.orderNumber || order.id || '—'}</Text>
+                <Text style={styles.orderId}>Order #{formatDisplayOrderId(order)}</Text>
                 <View style={styles.customerBadge}>
                   <User size={13} color="#0066FF" style={{ marginRight: 4 }} />
                   <Text style={styles.customerBadgeText}>Customer: {order.customer_name || order.customer?.name || 'Customer'}</Text>

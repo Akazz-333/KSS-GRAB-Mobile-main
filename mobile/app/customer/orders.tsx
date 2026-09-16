@@ -603,21 +603,21 @@ export default function OrdersPage() {
             </Pressable>
           </View>
         ) : (
-          filteredOrders.map((order) => {
+          filteredOrders.map((order, orderIdx) => {
             const currentStep = getCycleStepIndex(order.status);
             const isCancelled = order.status === 'cancelled';
             const isOngoing = isOngoingStatus(order.status);
             const activeStage = ORDER_CYCLE_STAGES[currentStep] || ORDER_CYCLE_STAGES[0];
 
             return (
-              <View key={order.rawId || order.id} style={styles.orderCard}>
+              <View key={`${order.rawId || order.id || 'cust_order'}_${orderIdx}`} style={styles.orderCard}>
                 {/* Order Top Row */}
                 <View style={styles.orderCardTopRow}>
                   <Pressable
                     style={styles.orderIdGroup}
                     onPress={() => setSelectedOrderModal(order)}
                   >
-                    <Text style={styles.orderIdText}>Order #{order.displayId || order.id}</Text>
+                    <Text style={styles.orderIdText}>Order #{formatDisplayOrderId(order)}</Text>
                     <ChevronRight size={16} color="#64748B" style={{ marginLeft: 2 }} />
                   </Pressable>
 
@@ -843,7 +843,7 @@ export default function OrdersPage() {
             <View style={styles.modalTopHeaderRow}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.modalTitleText}>
-                  Order #{selectedOrderModal?.displayId || selectedOrderModal?.id}
+                  Order #{formatDisplayOrderId(selectedOrderModal)}
                 </Text>
                 <Text style={styles.modalSubText}>
                   {selectedOrderModal?.placedDateText || selectedOrderModal?.date}
@@ -1077,7 +1077,7 @@ export default function OrdersPage() {
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.cancelModalTitle}>
-                  Cancel Order #{cancellingOrder?.displayId || cancellingOrder?.id}?
+                  Cancel Order #{formatDisplayOrderId(cancellingOrder)}?
                 </Text>
                 <Text style={styles.cancelModalSub}>
                   Are you sure you want to cancel this order? Once cancelled, this action cannot be undone.

@@ -20,6 +20,8 @@ interface RiderDutyContextValue {
   dutyStatus: DutyStatus;
   /** Whether the rider is online (ONLINE or ON_DELIVERY) */
   isOnline: boolean;
+  /** Whether the rider duty/punch status is currently being verified */
+  isDutyLoading: boolean;
   /** Partner code, e.g. "RDR-700B" */
   partnerCode: string;
   /** Punch-in timestamp string */
@@ -65,6 +67,7 @@ async function getUserPhone(): Promise<string> {
 // ─── Provider ─────────────────────────────────────────────────────
 export const RiderDutyProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [dutyStatus, setDutyStatus] = useState<DutyStatus>('OFFLINE');
+  const [isDutyLoading, setIsDutyLoading] = useState<boolean>(true);
   const [partnerCode, setPartnerCode] = useState<string>('RDR-700B');
   const [punchInTime, setPunchInTime] = useState<string>('--');
   const [rider, setRider] = useState<any>(null);
@@ -106,6 +109,7 @@ export const RiderDutyProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   // ── Fetch current status from backend (correct endpoint) ──────
   const refreshDutyStatus = useCallback(async () => {
+    setIsDutyLoading(true);
     try {
       // 1. Read local persisted state first (authoritative user action)
       const storedVal = await getItem<any>(STORAGE_KEY).catch(() => null);
@@ -155,6 +159,8 @@ export const RiderDutyProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       }
     } catch {
       // Silently fail — keep current state
+    } finally {
+      setIsDutyLoading(false);
     }
   }, []);
 
@@ -237,6 +243,7 @@ export const RiderDutyProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       value={{
         dutyStatus,
         isOnline,
+        isDutyLoading,
         partnerCode,
         punchInTime,
         rider,

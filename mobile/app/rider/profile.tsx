@@ -62,8 +62,6 @@ export default function RiderProfileScreen() {
   }, [fetchProfile]);
 
   const handleLogout = async () => {
-    // End shift and clean up duty state before logging out
-    await cleanupOnLogout();
     await logout();
     showToast('Logged out of Rider Portal', 'info');
     router.replace('/login' as any);
@@ -182,8 +180,7 @@ export default function RiderProfileScreen() {
 
       {/* Logout Button */}
       <Pressable style={styles.logoutBtn} onPress={handleLogout}>
-        <LogOut size={18} color={COLORS.danger} />
-        <Text style={styles.logoutText}>End Shift & Log Out</Text>
+        <Text style={styles.logoutText}>Log Out</Text>
       </Pressable>
 
       {/* Edit Bank Modal */}

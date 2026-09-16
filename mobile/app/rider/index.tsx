@@ -6,6 +6,7 @@ import { useRealtimeOrders } from '../../services/realtimeOrders';
 import { DeliveryAgent } from '../../types';
 import { useToast } from '../../context/ToastContext';
 import { useRiderDuty } from '../../context/RiderDutyContext';
+import { formatDisplayOrderId } from '../../utils/orderUtils';
 import { COLORS, SPACING, SHADOWS } from '../../constants/theme';
 import {
   Bike,
@@ -24,6 +25,7 @@ import {
   Fingerprint,
   LogOut,
   Coffee,
+  AlertTriangle,
 } from 'lucide-react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 
@@ -41,9 +43,22 @@ interface ActiveOrder {
 export default function RiderDashboardScreen() {
   const router = useRouter();
   const { showToast } = useToast();
-  const { isOnline, toggleDuty, refreshDutyStatus, rider: ctxRider } = useRiderDuty();
+  const { isOnline, isDutyLoading, toggleDuty, refreshDutyStatus, rider: ctxRider } = useRiderDuty();
   const [breakMode, setBreakMode] = useState(false);
   const [rider, setRider] = useState<DeliveryAgent | null>(null);
+
+  const handleOpenTaskNavigation = (e?: any) => {
+    if (e && e.stopPropagation) e.stopPropagation();
+    if (isDutyLoading) {
+      showToast('Verifying punch status... Please wait.', 'info');
+      return;
+    }
+    if (!isOnline) {
+      showToast('Please Punch In first to start this delivery.', 'error');
+      return;
+    }
+    router.push('/rider/active' as any);
+  };
 
   useEffect(() => {
     if (ctxRider) setRider(ctxRider);
@@ -130,6 +145,10 @@ export default function RiderDashboardScreen() {
 
   const handleAcceptOffer = async () => {
     if (!pendingOffer) return;
+    if (!isOnline) {
+      showToast('You must Punch In / Go Online before accepting delivery offers!', 'error');
+      return;
+    }
     const orderId = pendingOffer.id || pendingOffer.rawId;
     try {
       await post(`/delivery/${orderId}/accept`, {});
@@ -314,11 +333,39 @@ export default function RiderDashboardScreen() {
         </View>
       </View>
 
+      {/* 2.5 PUNCH-IN ENFORCEMENT BANNER */}
+      {!isOnline && (
+        <Pressable
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            backgroundColor: '#FFF7ED',
+            borderColor: '#FDBA74',
+            borderWidth: 1,
+            borderRadius: 14,
+            padding: 14,
+            marginBottom: SPACING.md,
+          }}
+          onPress={() => router.push('/rider/attendance' as any)}
+        >
+          <AlertTriangle size={20} color="#C2410C" style={{ marginRight: 10 }} />
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 13, fontWeight: '800', color: '#9A3412' }}>
+              YOU ARE CURRENTLY PUNCHED OUT / OFFLINE
+            </Text>
+            <Text style={{ fontSize: 11, color: '#C2410C', marginTop: 2, fontWeight: '500' }}>
+              Tap here to Punch In on Attendance screen to process deliveries.
+            </Text>
+          </View>
+          <ChevronRight size={18} color="#C2410C" />
+        </Pressable>
+      )}
+
       {/* 3. ACTIVE TASK BANNER — real data only */}
       {orderDisplay ? (
         <Pressable
           style={styles.activeTaskCard}
-          onPress={() => router.push('/rider/active' as any)}
+          onPress={handleOpenTaskNavigation}
         >
           <View style={styles.activeHeader}>
             <View style={styles.urgentBadge}>
@@ -329,7 +376,7 @@ export default function RiderDashboardScreen() {
           </View>
 
           <View style={styles.orderIdRow}>
-            <Text style={styles.orderId}>Order #{orderDisplay.id}</Text>
+            <Text style={styles.orderId}>Order #{formatDisplayOrderId(orderDisplay)}</Text>
           </View>
 
           {/* Prominent Customer Name Pill Row */}
@@ -358,11 +405,29 @@ export default function RiderDashboardScreen() {
             </View>
           </View>
 
-          <View style={styles.navigateBtn}>
-            <Navigation size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
-            <Text style={styles.navigateBtnText}>Open Task Navigation & Checklist</Text>
+          <Pressable
+            style={[
+              styles.navigateBtn,
+              !isOnline && { backgroundColor: '#EA580C' },
+              isDutyLoading && { backgroundColor: '#94A3B8', opacity: 0.8 }
+            ]}
+            onPress={handleOpenTaskNavigation}
+            disabled={isDutyLoading}
+          >
+            {isDutyLoading ? (
+              <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 8 }} />
+            ) : (
+              <Navigation size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+            )}
+            <Text style={styles.navigateBtnText}>
+              {isDutyLoading
+                ? 'Verifying Punch Status...'
+                : !isOnline
+                ? 'Punch In to Open Task Navigation'
+                : 'Open Task Navigation & Checklist'}
+            </Text>
             <ChevronRight size={16} color="#FFFFFF" style={{ marginLeft: 'auto' }} />
-          </View>
+          </Pressable>
         </Pressable>
       ) : (
         <View style={styles.noOrderCard}>
@@ -403,7 +468,7 @@ export default function RiderDashboardScreen() {
       <Text style={styles.sectionHeading}>Rider Operations Hub</Text>
 
       <View style={styles.navGrid}>
-        <Pressable style={styles.navCard} onPress={() => router.push('/rider/active' as any)}>
+        <Pressable style={styles.navCard} onPress={handleOpenTaskNavigation}>
           <View style={[styles.navIconBox, { backgroundColor: '#EFF6FF' }]}>
             <Navigation size={20} color="#0066FF" />
           </View>
@@ -451,7 +516,7 @@ export default function RiderDashboardScreen() {
             </View>
 
             <View style={styles.offerBody}>
-              <Text style={styles.offerOrderTitle}>Order #{pendingOffer?.orderNumber || pendingOffer?.id || pendingOffer?.rawId || '—'}</Text>
+              <Text style={styles.offerOrderTitle}>Order #{formatDisplayOrderId(pendingOffer)}</Text>
               <Text style={styles.offerPayout}>Payout: ₹{Math.max(30, Math.round(Number(pendingOffer?.total_amount || pendingOffer?.total || 0) * 0.3))}</Text>
               <Text style={styles.offerSub}>Pickup: {pendingOffer?.store_name || 'Grabit Dark Store'}</Text>
               <Text style={styles.offerSub}>Drop: {pendingOffer?.delivery_address || 'Customer Location'}</Text>

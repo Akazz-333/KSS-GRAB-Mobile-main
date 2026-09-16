@@ -7,6 +7,7 @@ import {
   TextInput,
   ActivityIndicator,
   Platform,
+  Image,
 } from 'react-native';
 let MapView: any = null;
 let Marker: any = null;
@@ -24,6 +25,22 @@ if (Platform.OS !== 'web') {
     PROVIDER_DEFAULT = Maps.PROVIDER_DEFAULT;
   } catch {}
 }
+
+const lon2tile = (lon: number, zoom: number) => {
+  return Math.floor(((lon + 180) / 360) * Math.pow(2, zoom));
+};
+
+const lat2tile = (lat: number, zoom: number) => {
+  return Math.floor(
+    ((1 -
+      Math.log(
+        Math.tan((lat * Math.PI) / 180) + 1 / Math.cos((lat * Math.PI) / 180)
+      ) /
+        Math.PI) /
+      2) *
+      Math.pow(2, zoom)
+  );
+};
 import {
   MapPin,
   Navigation,
@@ -85,6 +102,9 @@ export const SupermarketLocationMapPicker: React.FC<SupermarketLocationMapPicker
   const [liveTime, setLiveTime] = useState('');
   const [zoomLevel, setZoomLevel] = useState(initialRadius > 1000 ? 0.07 : 0.015);
 
+  const [mapZoomLevel, setMapZoomLevel] = useState(14);
+  const [mapProvider, setMapProvider] = useState<'google' | 'osm'>('google');
+
   // Live clock string
   useEffect(() => {
     const updateTime = () => {
@@ -145,6 +165,7 @@ export const SupermarketLocationMapPicker: React.FC<SupermarketLocationMapPicker
   const handleZoomIn = () => {
     const newDelta = Math.max(zoomLevel / 2, 0.002);
     setZoomLevel(newDelta);
+    setMapZoomLevel((z) => Math.min(z + 1, 19));
     mapRef.current?.animateToRegion(
       {
         latitude: coords.lat,
@@ -159,6 +180,7 @@ export const SupermarketLocationMapPicker: React.FC<SupermarketLocationMapPicker
   const handleZoomOut = () => {
     const newDelta = Math.min(zoomLevel * 2, 0.5);
     setZoomLevel(newDelta);
+    setMapZoomLevel((z) => Math.max(z - 1, 3));
     mapRef.current?.animateToRegion(
       {
         latitude: coords.lat,
@@ -204,6 +226,14 @@ export const SupermarketLocationMapPicker: React.FC<SupermarketLocationMapPicker
     setTimeout(() => setSavedNotice(''), 4000);
   };
 
+  const centerX = lon2tile(coords.lng, mapZoomLevel);
+  const centerY = lat2tile(coords.lat, mapZoomLevel);
+  const tileOffsets = [
+    [-1, -1], [0, -1], [1, -1],
+    [-1, 0],  [0, 0],  [1, 0],
+    [-1, 1],  [0, 1],  [1, 1],
+  ];
+
   return (
     <View style={styles.cardContainer}>
       {/* ── HEADER ROW (EXACT TO REACT WEB) ── */}
@@ -215,7 +245,7 @@ export const SupermarketLocationMapPicker: React.FC<SupermarketLocationMapPicker
           <View style={{ flex: 1 }}>
             <Text style={styles.visualizerTitle}>INTERACTIVE MAP & GEOFENCE VISUALIZER</Text>
             <Text style={styles.visualizerSub}>
-              Drag the marker pin or click anywhere on the map to set exact supermarket hub coordinates.
+              Live interactive map for exact supermarket hub coordinates & coverage radius.
             </Text>
           </View>
         </View>
@@ -229,60 +259,67 @@ export const SupermarketLocationMapPicker: React.FC<SupermarketLocationMapPicker
         </View>
       </View>
 
-      {/* ── MAP CONTAINER (WITH OPENSTREETMAP TILES & OVERLAYS) ── */}
+      {/* ── MAP CONTAINER (WITH CARTO / OSM TILES & GOOGLE EMBED FALLBACK) ── */}
       <View style={[styles.mapWrapper, { height }]}>
-        <MapView
-          ref={mapRef}
-          provider={PROVIDER_DEFAULT}
-          mapType={Platform.OS === 'android' ? 'none' : 'standard'}
-          style={styles.map}
-          initialRegion={{
-            latitude: coords.lat,
-            longitude: coords.lng,
-            latitudeDelta: zoomLevel,
-            longitudeDelta: zoomLevel,
-          }}
-          onRegionChangeComplete={handleRegionChangeComplete}
-        >
-          {/* OpenStreetMap Tile Layer API */}
-          <UrlTile
-            urlTemplate="https://a.tile.openstreetmap.org/{z}/{x}/{y}.png"
-            maximumZ={19}
-            flipY={false}
-            zIndex={-1}
-          />
+        {Platform.OS === 'web' && mapProvider === 'google' ? (
+          React.createElement('iframe', {
+            title: 'Supermarket Location Map Visualizer',
+            width: '100%',
+            height: '100%',
+            style: {
+              border: 0,
+              width: '100%',
+              height: '100%',
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+            },
+            loading: 'lazy',
+            allowFullScreen: true,
+            src: `https://maps.google.com/maps?q=${coords.lat},${coords.lng}&z=${mapZoomLevel}&output=embed`,
+          })
+        ) : (
+          <View style={styles.tileCanvasWrapper}>
+            {/* 3x3 Tile Grid Canvas */}
+            <View style={styles.tileGridContainer}>
+              {tileOffsets.map(([dx, dy]) => {
+                const tx = centerX + dx;
+                const ty = centerY + dy;
+                const tileUrl = `https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/${mapZoomLevel}/${ty}/${tx}`;
+                return (
+                  <Image
+                    key={`${mapZoomLevel}-${tx}-${ty}`}
+                    source={{ uri: tileUrl }}
+                    style={styles.tileImage}
+                    resizeMode="cover"
+                  />
+                );
+              })}
+            </View>
 
-          {/* Blue Geofence Circle with Dashed Border */}
-          <Circle
-            center={{ latitude: coords.lat, longitude: coords.lng }}
-            radius={geofenceRadius}
-            fillColor="rgba(0, 113, 227, 0.16)"
-            strokeColor="#0071E3"
-            strokeWidth={2.5}
-          />
+            {/* Geofence Translucent Ring Overlay */}
+            <View
+              style={[
+                styles.geofenceRingOverlay,
+                {
+                  width: Math.min(height * 0.75, (geofenceRadius / 5000) * 180 + 100),
+                  height: Math.min(height * 0.75, (geofenceRadius / 5000) * 180 + 100),
+                  borderRadius: Math.min(height * 0.375, ((geofenceRadius / 5000) * 180 + 100) / 2),
+                },
+              ]}
+            />
 
-          {/* Draggable Supermarket Pulse Marker */}
-          <Marker
-            coordinate={{ latitude: coords.lat, longitude: coords.lng }}
-            title={storeTitle}
-            description={resolvedAddress}
-            draggable
-            onDragEnd={(e: any) => {
-              const { latitude, longitude } = e.nativeEvent.coordinate;
-              const newLat = parseFloat(latitude.toFixed(6));
-              const newLng = parseFloat(longitude.toFixed(6));
-              setCoords({ lat: newLat, lng: newLng });
-              reverseGeocode(newLat, newLng);
-            }}
-          >
-            <View style={styles.markerContainer}>
+            {/* Centered Store Hub Pin */}
+            <View style={styles.centerPinWrapper}>
               <View style={styles.markerPulse} />
               <View style={styles.markerBadge}>
                 <MapPin size={16} color="#FFFFFF" />
               </View>
             </View>
-          </Marker>
-        </MapView>
+          </View>
+        )}
 
         {/* Top-Left Zoom Controls */}
         <View style={styles.zoomControlBox}>
@@ -295,17 +332,28 @@ export const SupermarketLocationMapPicker: React.FC<SupermarketLocationMapPicker
           </Pressable>
         </View>
 
-        {/* Top-Right My Location Button Overlay */}
-        <Pressable
-          style={styles.myLocationBtn}
-          onPress={handleLocateMe}
-          disabled={isLocating}
-        >
-          <LocateFixed size={14} color="#0071E3" />
-          <Text style={styles.myLocationText}>
-            {isLocating ? 'Locating...' : 'My Location'}
-          </Text>
-        </Pressable>
+        {/* Top-Right Control Overlay */}
+        <View style={styles.topRightControls}>
+          <Pressable
+            style={styles.providerBtn}
+            onPress={() => setMapProvider((p) => (p === 'google' ? 'osm' : 'google'))}
+          >
+            <Text style={styles.providerBtnText}>
+              {mapProvider === 'google' ? '🌐 Google Map' : '🗺️ Street Map'}
+            </Text>
+          </Pressable>
+
+          <Pressable
+            style={styles.myLocationBtn}
+            onPress={handleLocateMe}
+            disabled={isLocating}
+          >
+            <LocateFixed size={14} color="#0071E3" />
+            <Text style={styles.myLocationText}>
+              {isLocating ? 'Locating...' : 'My Location'}
+            </Text>
+          </Pressable>
+        </View>
 
         {/* ── BOTTOM LIGHT GLASSMORPHISM OVERLAY BANNER (MATCHING SCREENSHOT) ── */}
         <View style={styles.bottomFloatingCard}>
@@ -460,6 +508,43 @@ const styles = StyleSheet.create({
     position: 'relative',
     width: '100%',
     backgroundColor: '#E2E8F0',
+    overflow: 'hidden',
+  },
+  tileCanvasWrapper: {
+    width: '100%',
+    height: '100%',
+    position: 'relative',
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#E2E8F0',
+  },
+  tileGridContainer: {
+    width: 768,
+    height: 768,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    transform: [{ translateX: -384 }, { translateY: -384 }],
+  },
+  tileImage: {
+    width: 256,
+    height: 256,
+  },
+  geofenceRingOverlay: {
+    position: 'absolute',
+    borderWidth: 2.5,
+    borderColor: '#0071E3',
+    backgroundColor: 'rgba(0, 113, 227, 0.16)',
+    zIndex: 10,
+  },
+  centerPinWrapper: {
+    position: 'absolute',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 20,
   },
   map: {
     width: '100%',
@@ -511,10 +596,30 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: '#E2E8F0',
   },
-  myLocationBtn: {
+  topRightControls: {
     position: 'absolute',
     top: 12,
     right: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    zIndex: 500,
+  },
+  providerBtn: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    ...SHADOWS.md,
+  },
+  providerBtnText: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#0071E3',
+  },
+  myLocationBtn: {
     backgroundColor: '#FFFFFF',
     borderRadius: 10,
     borderWidth: 1,
@@ -524,7 +629,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    zIndex: 500,
     ...SHADOWS.md,
   },
   myLocationText: {
