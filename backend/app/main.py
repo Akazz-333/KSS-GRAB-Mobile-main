@@ -1152,7 +1152,7 @@ async def complete_profile(body: RegistrationRequest):
     if not body.full_name or not body.full_name.strip():
         raise HTTPException(400, "Full name is required.")
 
-    _VERIFIED_PHONES.pop(body.phone, None)
+    await cache_del(ver_key)
 
     # Double-check user doesn't already exist (race condition guard)
     rows = await store.get("profiles", {"phone": f"eq.{body.phone}"})

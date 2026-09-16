@@ -27,6 +27,16 @@
       ]
     },
     "plugins": [],
+    "platforms": [
+      "ios",
+      "android",
+      "web"
+    ],
+    "web": {
+      "bundler": "metro",
+      "output": "single",
+      "favicon": "./assets/favicon.png"
+    },
     "experiments": {
       "typedRoutes": true
     }
