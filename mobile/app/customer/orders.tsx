@@ -342,9 +342,17 @@ export default function OrdersPage() {
         if (dupIndex === -1) {
           deduplicatedList.push(o);
         } else {
-          if (o.items && o.items.length > 0 && (!deduplicatedList[dupIndex].items || deduplicatedList[dupIndex].items.length === 0)) {
-            deduplicatedList[dupIndex].items = o.items;
-          }
+          const existing = deduplicatedList[dupIndex];
+          const freshStatus = (o.status && o.status !== 'placed') ? o.status : existing.status;
+          const freshStep = (o.trackerStep !== undefined && o.trackerStep > (existing.trackerStep ?? 0)) ? o.trackerStep : existing.trackerStep;
+          deduplicatedList[dupIndex] = {
+            ...existing,
+            ...o,
+            status: freshStatus,
+            trackerStep: freshStep,
+            items: (o.items && o.items.length > 0) ? o.items : existing.items,
+            totalItems: (o.items && o.items.length > 0) ? o.totalItems : existing.totalItems,
+          };
         }
       });
 

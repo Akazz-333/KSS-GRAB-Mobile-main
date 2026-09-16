@@ -726,10 +726,14 @@ async def idempotent_order_upsert(order_id: str, patch_data: dict, fallback_sing
 
     return False
 
-ALLOWED_WORKFLOW_STEPS = {"REACH_STORE", "STORE_CHECKLIST", "EN_ROUTE", "OTP_DELIVERY"}
+ALLOWED_WORKFLOW_STEPS = {"REACH_STORE", "STORE_CHECKLIST", "EN_ROUTE", "ARRIVED", "OTP_DELIVERY", "COMPLETED", "DELIVERED"}
 WORKFLOW_STATUS_MAP = {
     "STORE_CHECKLIST": "picked_up",
     "EN_ROUTE": "out_for_delivery",
+    "ARRIVED": "out_for_delivery",
+    "OTP_DELIVERY": "out_for_delivery",
+    "COMPLETED": "delivered",
+    "DELIVERED": "delivered",
 }
 TERMINAL_ORDER_STATUSES = {"delivered", "cancelled", "failed_delivery", "returned"}
 
@@ -2519,25 +2523,32 @@ def normalize_status(raw_status: any) -> str:
         "delivering": "out_for_delivery",
         "picked_up": "out_for_delivery",
         "out_for_delivery": "out_for_delivery",
+        "on_way": "out_for_delivery",
+        "en_route": "out_for_delivery",
+        "dispatched": "out_for_delivery",
+        "arrived": "out_for_delivery",
         "ready": "ready_for_pickup",
         "ready_for_pickup": "ready_for_pickup",
         "packed": "ready_for_pickup",
         "cancel": "cancelled",
         "canceled": "cancelled",
+        "completed": "delivered",
+        "finished": "delivered",
+        "done": "delivered",
     }
     return alias_map.get(s, s)
 
 ALLOWED_STATUS_TRANSITIONS: dict[str, set[str]] = {
-    "placed": {"confirmed", "preparing", "ready_for_pickup", "cancelled"},
-    "pending": {"confirmed", "preparing", "ready_for_pickup", "cancelled"},
-    "confirmed": {"confirmed", "preparing", "ready_for_pickup", "cancelled"},
-    "preparing": {"preparing", "ready_for_pickup", "out_for_delivery", "cancelled"},
-    "ready_for_pickup": {"ready_for_pickup", "out_for_delivery", "cancelled"},
-    "out_for_delivery": {"delivered", "failed_delivery", "cancelled", "returned"},
-    "delivered": set(),
-    "cancelled": set(),
-    "returned": set(),
-    "failed_delivery": set(),
+    "placed": {"placed", "confirmed", "preparing", "ready_for_pickup", "out_for_delivery", "delivered", "cancelled"},
+    "pending": {"pending", "confirmed", "preparing", "ready_for_pickup", "out_for_delivery", "delivered", "cancelled"},
+    "confirmed": {"confirmed", "preparing", "ready_for_pickup", "out_for_delivery", "delivered", "cancelled"},
+    "preparing": {"preparing", "ready_for_pickup", "out_for_delivery", "delivered", "cancelled"},
+    "ready_for_pickup": {"ready_for_pickup", "out_for_delivery", "delivered", "cancelled"},
+    "out_for_delivery": {"out_for_delivery", "delivered", "failed_delivery", "cancelled", "returned"},
+    "delivered": {"delivered"},
+    "cancelled": {"cancelled"},
+    "returned": {"returned"},
+    "failed_delivery": {"failed_delivery"},
 }
 
 @router.patch("/orders/{order_id}/status")
