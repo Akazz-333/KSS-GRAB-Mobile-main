@@ -26,6 +26,10 @@ import {
   Tag,
   X,
 } from 'lucide-react-native';
+import { categories as defaultCategories, getCanonicalSlug } from '../../data/categories';
+import { products as defaultProducts } from '../../data/products';
+import { getValidImage } from '../../services/cloudinary';
+import { getItem, setItem } from '../../services/storage';
 
 interface SellerCategory {
   id: string;
@@ -40,10 +44,197 @@ interface SellerCategory {
   is_active: boolean;
 }
 
+const SUBCATEGORY_MAP: Record<string, Array<{ name: string; icon: string; image?: string }>> = {
+  'produce': [
+    { name: 'Fresh Fruits', icon: '🍎', image: 'apples-real.jpg' },
+    { name: 'Fresh Vegetables', icon: '🥦', image: 'fresh-red-apples.jpg' },
+    { name: 'Exotic & Organic', icon: '🥑', image: 'fresh-fruits-veggies-hero-transparent.png' },
+  ],
+  'dairy-bakery': [
+    { name: 'Milk & Butter', icon: '🥛', image: 'amul-butter-real.jpg' },
+    { name: 'Cheese & Paneer', icon: '🧀', image: 'combo_cheese.jpg' },
+    { name: 'Fresh Bread & Buns', icon: '🍞', image: 'brown_bread_real.jpg' },
+  ],
+  'snacks-munchies': [
+    { name: 'Potato Chips', icon: '🥔', image: 'lays-magic-masala.png' },
+    { name: 'Tortilla & Corn Nachos', icon: '🌽', image: 'subcat-tortilla-corn.jpg' },
+    { name: 'Namkeen & Crunch', icon: '🥨', image: 'subcat-namkeen.jpg' },
+  ],
+  'beverages': [
+    { name: 'Soft Drinks & Sodas', icon: '🥤', image: 'coca-cola-real.jpg' },
+    { name: 'Energy & Health Drinks', icon: '⚡', image: 'red_bull_real.jpg' },
+    { name: 'Fresh Fruit Juices', icon: '🧃', image: 'tropicana_juice_real.jpg' },
+  ],
+  'staples': [
+    { name: 'Atta & Flours', icon: '🌾', image: 'aashirvaad-atta-real.jpg' },
+    { name: 'Basmati & Regular Rice', icon: '🍚', image: 'fortune_basmati_real.jpg' },
+    { name: 'Dals & Pulses', icon: '🥣', image: 'toor_dal_real.jpg' },
+  ],
+  'chocolates': [
+    { name: 'Premium Chocolates', icon: '🍫', image: 'cadbury-silk-real.jpg' },
+    { name: 'Wafer Bars & Candies', icon: '🍬', image: 'kitkat_real.jpg' },
+    { name: 'Spreads & Gift Boxes', icon: '🎁', image: 'cadbury-dairy-milk-silk.jpg' },
+  ],
+  'personal-care': [
+    { name: 'Handwash & Sanitizers', icon: '🧴', image: 'dettol-handwash-real.jpg' },
+    { name: 'Hair Care & Shampoos', icon: '💇', image: 'combo_hygiene.jpg' },
+    { name: 'Bath Soaps & Skincare', icon: '🧼', image: 'dettol_real.jpg' },
+  ],
+  'household': [
+    { name: 'Detergents & Fabric Care', icon: '🧺', image: 'surf-excel-real.jpg' },
+    { name: 'Dishwash & Kitchen Cleaners', icon: '🍽️', image: 'surf_real.jpg' },
+    { name: 'Floor & Surface Cleaners', icon: '🧹', image: 'dettol_real.jpg' },
+  ],
+  'tea-coffee': [
+    { name: 'Instant & Filter Coffee', icon: '☕', image: 'subcat-instant-coffee.jpg' },
+    { name: 'Tea Powder & Green Tea', icon: '🍵', image: 'combo_tea.jpg' },
+  ],
+  'biscuits': [
+    { name: 'Cream Biscuits', icon: '🍪', image: 'oreo-biscuits-real.jpg' },
+    { name: 'Cookies & Rusks', icon: '🧇', image: 'parle_g_real.jpg' },
+  ],
+  'instant-food': [
+    { name: 'Instant Noodles & Pasta', icon: '🍜', image: 'maggi_noodles_real.jpg' },
+    { name: 'Ready-to-Eat Curries & Soups', icon: '🍲', image: 'instant-noodles-hero-transparent.png' },
+  ],
+  'oil': [
+    { name: 'Cooking & Refined Oil', icon: '🛢️', image: 'fortune-oil-real.jpg' },
+    { name: 'Desi Ghee & Butter Oil', icon: '🧈', image: 'fortune_oil_real.jpg' },
+  ],
+  'electronics': [
+    { name: 'Headphones & TWS Audio', icon: '🎧', image: 'subcat-headphones.jpg' },
+    { name: 'Smartwatches & Accessories', icon: '⌚', image: 'electronics-hero-banner.jpg' },
+  ],
+  'fashion': [
+    { name: 'Sneakers & Casual Shoes', icon: '👟', image: 'sneakers.jpg' },
+    { name: 'Eyewear & Accessories', icon: '🕶️', image: 'sneakers.jpg' },
+  ],
+  'baby-care': [
+    { name: 'Diapers & Gentle Wipes', icon: '👶', image: 'category-baby-care.jpg' },
+    { name: 'Baby Food & Bath Care', icon: '🍼', image: 'category-baby-care.jpg' },
+  ],
+  'pet-care': [
+    { name: 'Dog Food & Chew Treats', icon: '🐶', image: 'category-pet-care.jpg' },
+    { name: 'Cat Food & Pet Grooming', icon: '🐱', image: 'category-pet-care.jpg' },
+  ],
+  'beauty-cosmetics': [
+    { name: 'Face Serums & Moisturizers', icon: '💄', image: 'subcat-face-serums.jpg' },
+    { name: 'Makeup & Beauty Essentials', icon: '💅', image: 'category-beauty-cosmetics.jpg' },
+  ],
+  'health-wellness': [
+    { name: 'Vitamins & Immunity Boosters', icon: '💊', image: 'category-health-wellness.jpg' },
+    { name: 'First Aid & Pain Relief', icon: '🩹', image: 'category-health-wellness.jpg' },
+  ],
+  'meat-seafood': [
+    { name: 'Fresh Poultry & Chicken', icon: '🍗', image: 'banner-chicken-eggs.jpg' },
+    { name: 'Farm Brown & White Eggs', icon: '🥚', image: 'banner-chicken-eggs.jpg' },
+    { name: 'Fish & Fresh Seafood', icon: '🐟', image: 'banner-fresh-meat-section.jpg' },
+  ],
+  'home-kitchen': [
+    { name: 'Cookware & Non-Stick Pans', icon: '🍳', image: 'category-home-kitchen.jpg' },
+    { name: 'Water Bottles & Glass Flasks', icon: '🍶', image: 'category-home-kitchen.jpg' },
+  ],
+  'stationery-office': [
+    { name: 'Notebooks, Diaries & Pads', icon: '📓', image: 'category-stationery-office.jpg' },
+    { name: 'Pens, Markers & Art Sets', icon: '✒️', image: 'category-stationery-office.jpg' },
+  ],
+  'sports-fitness': [
+    { name: 'Sports Gear & Badminton', icon: '🏸', image: 'category-sports-fitness.jpg' },
+    { name: 'Whey Protein & Gym Shakers', icon: '🏋️', image: 'category-sports-fitness.jpg' },
+  ],
+  'toys-games': [
+    { name: 'Building Bricks & Blocks', icon: '🧱', image: 'category-toys-games.jpg' },
+    { name: 'Board Games & Puzzles', icon: '🎲', image: 'category-toys-games.jpg' },
+  ],
+  'pooja-needs': [
+    { name: 'Agarbatti & Dhoop Sticks', icon: '🪔', image: 'category-pooja-needs.jpg' },
+    { name: 'Camphor, Diyas & Wicks', icon: '🕯️', image: 'category-pooja-needs.jpg' },
+  ],
+};
+
+function buildProductCounts(prodsRes: any): Map<string, number> {
+  const prodCountsByCat = new Map<string, number>();
+
+  for (const p of defaultProducts) {
+    const cId = String(p.category || p.category_slug || '');
+    const slug = getCanonicalSlug(cId);
+    if (cId) {
+      prodCountsByCat.set(cId, (prodCountsByCat.get(cId) || 0) + 1);
+      prodCountsByCat.set(cId.toLowerCase(), (prodCountsByCat.get(cId.toLowerCase()) || 0) + 1);
+    }
+    if (slug) {
+      prodCountsByCat.set(slug, (prodCountsByCat.get(slug) || 0) + 1);
+    }
+  }
+
+  if (Array.isArray(prodsRes)) {
+    for (const p of prodsRes) {
+      const cId = String(p.category_id || p.category || '');
+      const slug = getCanonicalSlug(cId);
+      if (cId) {
+        prodCountsByCat.set(cId, (prodCountsByCat.get(cId) || 0) + 1);
+        prodCountsByCat.set(cId.toLowerCase(), (prodCountsByCat.get(cId.toLowerCase()) || 0) + 1);
+      }
+      if (slug) {
+        prodCountsByCat.set(slug, (prodCountsByCat.get(slug) || 0) + 1);
+      }
+    }
+  }
+
+  return prodCountsByCat;
+}
+
+function getBaseSellerCategories(prodCountsByCat?: Map<string, number>): SellerCategory[] {
+  const allCats: SellerCategory[] = [];
+
+  defaultCategories.forEach((cat, idx) => {
+    const slug = cat.slug || getCanonicalSlug(cat.name || '') || 'category-' + idx;
+    const catId = String(cat.id || 'cat-' + idx);
+    const rawImage = cat.image ? getValidImage(cat.image) : undefined;
+    const pCount = prodCountsByCat
+      ? (prodCountsByCat.get(catId) || prodCountsByCat.get(slug) || prodCountsByCat.get(cat.name.toLowerCase()) || cat.itemCount || 12)
+      : (cat.itemCount || 12);
+
+    const rootCat: SellerCategory = {
+      id: catId,
+      name: cat.name,
+      slug,
+      icon: cat.icon || '📦',
+      image: rawImage,
+      level: 'root',
+      parent_id: null,
+      product_count: pCount,
+      is_active: true,
+    };
+    allCats.push(rootCat);
+
+    const subs = SUBCATEGORY_MAP[slug];
+    if (subs && subs.length > 0) {
+      subs.forEach((sub, sIdx) => {
+        const subImage = sub.image ? getValidImage(sub.image) : undefined;
+        allCats.push({
+          id: `${catId}-sub-${sIdx + 1}`,
+          name: sub.name,
+          slug: `${slug}-${sub.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+          icon: sub.icon || '📁',
+          image: subImage,
+          level: 'subcategory',
+          parent_id: catId,
+          parent_name: cat.name,
+          product_count: Math.max(1, Math.round(pCount / (subs.length + 1))),
+          is_active: true,
+        });
+      });
+    }
+  });
+
+  return allCats;
+}
+
 export default function SellerCategoriesScreen() {
   const { showToast } = useToast();
-  const [categoryList, setCategoryList] = useState<SellerCategory[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [categoryList, setCategoryList] = useState<SellerCategory[]>(() => getBaseSellerCategories());
+  const [isLoading, setIsLoading] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const [viewMode, setViewMode] = useState<'grid' | 'tree'>('grid');
@@ -63,45 +254,55 @@ export default function SellerCategoriesScreen() {
   const [formIsActive, setFormIsActive] = useState<boolean>(true);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
-  // Live cloud categories fetch with real product count cross-referencing
+  // Live cloud categories fetch with product count cross-referencing and fallback
   const fetchCategoriesLive = useCallback(async () => {
     try {
+      const stored = await getItem<SellerCategory[]>('grabit_seller_categories').catch(() => null);
+
       const [catsRes, prodsRes] = await Promise.all([
         get('/categories').catch(() => []),
         get('/products').catch(() => [])
       ]);
 
-      const prodsList = Array.isArray(prodsRes) ? prodsRes : [];
-      const prodCountsByCat = new Map<string, number>();
-      for (const p of prodsList) {
-        const cId = String(p.category_id || p.category || '');
-        if (cId) {
-          prodCountsByCat.set(cId, (prodCountsByCat.get(cId) || 0) + 1);
-        }
-      }
+      const prodCountsByCat = buildProductCounts(prodsRes);
 
-      if (Array.isArray(catsRes)) {
-        const formatted: SellerCategory[] = catsRes.map((cat: any, idx: number) => {
+      if (Array.isArray(catsRes) && catsRes.length > 0) {
+        const cloudCats: SellerCategory[] = catsRes.map((cat: any, idx: number) => {
           const catId = String(cat.id || 'cat-' + idx);
           const rawImage = (cat.image_url && cat.image_url.trim()) || (cat.image && cat.image.trim()) || '';
-          const pCount = prodCountsByCat.get(catId) || prodCountsByCat.get(cat.slug) || 0;
+          const slug = cat.slug || getCanonicalSlug(cat.name || '') || 'category-' + idx;
+          const pCount = prodCountsByCat.get(catId) || prodCountsByCat.get(slug) || prodCountsByCat.get(String(cat.name || '').toLowerCase()) || 0;
 
           return {
             id: catId,
             name: cat.name || 'Unnamed Category',
-            slug: cat.slug || cat.name?.toLowerCase()?.replace(/\s+/g, '-') || 'category-' + idx,
+            slug,
             icon: cat.icon || '📦',
-            image: rawImage || undefined,
+            image: rawImage ? getValidImage(rawImage) : undefined,
             level: cat.level || 'root',
             parent_id: cat.parent_id ? String(cat.parent_id) : null,
             product_count: pCount,
             is_active: cat.is_active ?? true,
           };
         });
-        setCategoryList(formatted);
+
+        const cloudSlugSet = new Set(cloudCats.map((c) => c.slug.toLowerCase()));
+        const missingDefaults = getBaseSellerCategories(prodCountsByCat).filter(
+          (def) => !cloudSlugSet.has(def.slug.toLowerCase())
+        );
+
+        setCategoryList([...cloudCats, ...missingDefaults]);
+      } else if (stored && Array.isArray(stored) && stored.length > 0) {
+        const updatedStored = stored.map((c) => ({
+          ...c,
+          product_count: prodCountsByCat.get(c.id) || prodCountsByCat.get(c.slug) || c.product_count || 0,
+        }));
+        setCategoryList(updatedStored);
+      } else {
+        setCategoryList(getBaseSellerCategories(prodCountsByCat));
       }
     } catch {
-      // Retain list
+      // Retain populated list
     } finally {
       setIsLoading(false);
     }
@@ -148,22 +349,24 @@ export default function SellerCategoriesScreen() {
       name: formName.trim(),
       slug,
       icon: formIcon,
-      image: formImage.trim() || undefined,
+      image: formImage.trim() ? getValidImage(formImage.trim()) : undefined,
       level: formLevel,
       parent_id: formParentId || null,
       is_active: formIsActive,
       product_count: editingCategory?.product_count || 0,
     };
 
+    let updatedList: SellerCategory[];
     if (editingCategory) {
-      setCategoryList((prev) =>
-        prev.map((c) => (c.id === editingCategory.id ? { ...c, ...payload } : c))
-      );
+      updatedList = categoryList.map((c) => (c.id === editingCategory.id ? { ...c, ...payload } : c));
+      setCategoryList(updatedList);
       showToast(`Category "${formName}" updated!`, 'success');
     } else {
-      setCategoryList((prev) => [payload, ...prev]);
+      updatedList = [payload, ...categoryList];
+      setCategoryList(updatedList);
       showToast(`Category "${formName}" created!`, 'success');
     }
+    await setItem('grabit_seller_categories', updatedList).catch(() => {});
     setIsModalVisible(false);
     setIsSubmitting(false);
 
@@ -173,29 +376,35 @@ export default function SellerCategoriesScreen() {
       } else {
         const created = await post('/categories', payload);
         if (created && created.id) {
-          setCategoryList((prev) =>
-            prev.map((c) => (c.id === payload.id ? { ...c, id: String(created.id) } : c))
-          );
+          setCategoryList((prev) => {
+            const next = prev.map((c) => (c.id === payload.id ? { ...c, id: String(created.id) } : c));
+            setItem('grabit_seller_categories', next).catch(() => {});
+            return next;
+          });
         }
       }
     } catch {
       // Local instant update already completed
     }
   };
+
   const handleToggleActive = async (cat: SellerCategory) => {
     const nextState = !cat.is_active;
-    setCategoryList((prev) =>
-      prev.map((c) => (c.id === cat.id ? { ...c, is_active: nextState } : c))
-    );
+    const updated = categoryList.map((c) => (c.id === cat.id ? { ...c, is_active: nextState } : c));
+    setCategoryList(updated);
+    await setItem('grabit_seller_categories', updated).catch(() => {});
     showToast(`Category "${cat.name}" is now ${nextState ? 'Active' : 'Inactive'}`, 'info');
     try {
       await patch(`/categories/${cat.id}`, { is_active: nextState });
     } catch {}
   };
+
   const handleDeleteCategory = async () => {
     if (!deleteModalCat) return;
     const target = deleteModalCat;
-    setCategoryList((prev) => prev.filter((c) => c.id !== target.id));
+    const updated = categoryList.filter((c) => c.id !== target.id && c.parent_id !== target.id);
+    setCategoryList(updated);
+    await setItem('grabit_seller_categories', updated).catch(() => {});
     showToast(`Category "${target.name}" deleted`, 'success');
     setDeleteModalCat(null);
 
@@ -226,7 +435,7 @@ export default function SellerCategoriesScreen() {
       <View style={styles.topHeader}>
         <View style={styles.titleRow}>
           <Grid size={22} color={COLORS.primary} style={{ marginRight: 8 }} />
-          <Text style={styles.headerTitle}>Categories ({categoryList.length})</Text>
+          <Text style={styles.headerTitle}>Categories ({rootCategories.length})</Text>
         </View>
         <Pressable style={styles.addBtn} onPress={openAddModal}>
           <Plus size={16} color="#FFFFFF" />
@@ -302,8 +511,8 @@ export default function SellerCategoriesScreen() {
       ) : viewMode === 'grid' ? (
         <ScrollView contentContainerStyle={styles.gridTwoColContent} showsVerticalScrollIndicator={false}>
           <View style={styles.gridTwoColRow}>
-            {filteredCategories.map((item, idx) => {
-              const subCount = categoryList.filter((c) => c.parent_id === item.id).length || 4;
+            {(searchQuery.trim() ? filteredCategories : filteredCategories.filter((c) => c.level === 'root' || !c.parent_id)).map((item, idx) => {
+              const subCount = categoryList.filter((c) => c.parent_id === item.id).length || 3;
               return (
                 <View key={item.id ? String(item.id) : 'cat-' + idx} style={styles.gridCategoryCard}>
                   {/* Category Image with Overlaid Active Status Badge */}
@@ -329,7 +538,7 @@ export default function SellerCategoriesScreen() {
                     {item.name}
                   </Text>
                   <Text style={styles.catSubTitle} numberOfLines={1}>
-                    {item.name} quick-...
+                    {item.name} essentials
                   </Text>
 
                   {/* Item Stats & Active Toggle Switch */}
@@ -365,6 +574,12 @@ export default function SellerCategoriesScreen() {
                 </View>
               );
             })}
+            {filteredCategories.length === 0 ? (
+              <View style={{ width: '100%', alignItems: 'center', justifyContent: 'center', paddingVertical: 40 }}>
+                <Text style={{ fontSize: 16, fontWeight: '700', color: COLORS.text }}>No categories found</Text>
+                <Text style={{ fontSize: 12, color: COLORS.textSecondary, marginTop: 4 }}>Try searching with another term</Text>
+              </View>
+            ) : null}
           </View>
         </ScrollView>
       ) : (
