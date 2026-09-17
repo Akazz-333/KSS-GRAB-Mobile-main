@@ -32,6 +32,12 @@ import { categories as defaultCategories, getCanonicalSlug } from '../../data/ca
 import { products as defaultProducts } from '../../data/products';
 import { getValidImage } from '../../services/cloudinary';
 import { getItem, setItem } from '../../services/storage';
+import {
+  saveCategory as syncSaveCategory,
+  deleteCategory as syncDeleteCategory,
+  onCatalogUpdate,
+  getSynchronizedProducts,
+} from '../../services/catalog';
 
 interface SellerCategory {
   id: string;
@@ -260,50 +266,83 @@ export default function SellerCategoriesScreen() {
   // Live cloud categories fetch with product count cross-referencing and fallback
   const fetchCategoriesLive = useCallback(async () => {
     try {
-      const stored = await getItem<SellerCategory[]>('grabit_seller_categories').catch(() => null);
-
-      const [catsRes, prodsRes] = await Promise.all([
+      const [stored, catsRes, allProds] = await Promise.all([
+        getItem<SellerCategory[]>('grabit_seller_categories').catch(() => null),
         get('/categories').catch(() => []),
-        get('/products').catch(() => [])
+        getSynchronizedProducts().catch(() => defaultProducts),
       ]);
 
-      const prodCountsByCat = buildProductCounts(prodsRes);
+      const prodCountsByCat = buildProductCounts(allProds);
+      const baseDefaults = getBaseSellerCategories(prodCountsByCat);
 
-      if (Array.isArray(catsRes) && catsRes.length > 0) {
-        const cloudCats: SellerCategory[] = catsRes.map((cat: any, idx: number) => {
-          const catId = String(cat.id || 'cat-' + idx);
-          const rawImage = (cat.image_url && cat.image_url.trim()) || (cat.image && cat.image.trim()) || '';
-          const slug = cat.slug || getCanonicalSlug(cat.name || '') || 'category-' + idx;
-          const pCount = prodCountsByCat.get(catId) || prodCountsByCat.get(slug) || prodCountsByCat.get(String(cat.name || '').toLowerCase()) || 0;
+      // Unified map ensuring all default and custom categories are maintained
+      const mergedMap = new Map<string, SellerCategory>();
 
-          return {
-            id: catId,
-            name: cat.name || 'Unnamed Category',
-            slug,
-            icon: cat.icon || '📦',
-            image: rawImage ? getValidImage(rawImage) : undefined,
-            level: cat.level || 'root',
-            parent_id: cat.parent_id ? String(cat.parent_id) : null,
-            product_count: pCount,
-            is_active: cat.is_active ?? true,
-          };
-        });
-
-        const cloudSlugSet = new Set(cloudCats.map((c) => c.slug.toLowerCase()));
-        const missingDefaults = getBaseSellerCategories(prodCountsByCat).filter(
-          (def) => !cloudSlugSet.has(def.slug.toLowerCase())
-        );
-
-        setCategoryList([...cloudCats, ...missingDefaults]);
-      } else if (stored && Array.isArray(stored) && stored.length > 0) {
-        const updatedStored = stored.map((c) => ({
-          ...c,
-          product_count: prodCountsByCat.get(c.id) || prodCountsByCat.get(c.slug) || c.product_count || 0,
-        }));
-        setCategoryList(updatedStored);
-      } else {
-        setCategoryList(getBaseSellerCategories(prodCountsByCat));
+      // 1. Base defaults (all 18 root categories + subcategories)
+      for (const def of baseDefaults) {
+        mergedMap.set(def.slug.toLowerCase(), def);
+        mergedMap.set(String(def.id), def);
       }
+
+      // 2. Cloud categories (overlay by slug or id)
+      if (Array.isArray(catsRes) && catsRes.length > 0) {
+        for (const cat of catsRes) {
+          const catId = String(cat.id || 'cat-' + (cat.slug || ''));
+          const rawImage = (cat.image_url && cat.image_url.trim()) || (cat.image && cat.image.trim()) || '';
+          const slug = cat.slug || getCanonicalSlug(cat.name || '') || catId;
+          const pCount = prodCountsByCat.get(catId) || prodCountsByCat.get(slug) || prodCountsByCat.get(String(cat.name || '').toLowerCase()) || 0;
+          const existing = mergedMap.get(slug.toLowerCase()) || mergedMap.get(catId);
+
+          const item: SellerCategory = {
+            id: catId,
+            name: cat.name || existing?.name || 'Unnamed Category',
+            slug,
+            icon: cat.icon || existing?.icon || '📦',
+            image: rawImage ? getValidImage(rawImage) : existing?.image,
+            level: cat.level || existing?.level || 'root',
+            parent_id: cat.parent_id ? String(cat.parent_id) : (existing?.parent_id || null),
+            parent_name: existing?.parent_name,
+            product_count: pCount || existing?.product_count || 0,
+            is_active: cat.is_active ?? existing?.is_active ?? true,
+          };
+          mergedMap.set(slug.toLowerCase(), item);
+          mergedMap.set(catId, item);
+        }
+      }
+
+      // 3. Stored seller categories (highest priority overlay)
+      if (Array.isArray(stored) && stored.length > 0) {
+        for (const sc of stored) {
+          const catId = String(sc.id);
+          const slug = sc.slug || getCanonicalSlug(sc.name || '');
+          const existing = mergedMap.get(slug.toLowerCase()) || mergedMap.get(catId);
+          const pCount = prodCountsByCat.get(catId) || prodCountsByCat.get(slug) || sc.product_count || existing?.product_count || 0;
+
+          const item: SellerCategory = {
+            ...(existing || {}),
+            ...sc,
+            id: catId,
+            name: sc.name || existing?.name || 'Category',
+            slug,
+            product_count: pCount,
+            is_active: sc.is_active ?? existing?.is_active ?? true,
+          };
+          mergedMap.set(slug.toLowerCase(), item);
+          mergedMap.set(catId, item);
+        }
+      }
+
+      // Collect unique categories preserving root + subcategory hierarchy
+      const uniqueList: SellerCategory[] = [];
+      const seenIds = new Set<string>();
+      for (const cat of mergedMap.values()) {
+        if (!seenIds.has(cat.id)) {
+          seenIds.add(cat.id);
+          uniqueList.push(cat);
+        }
+      }
+
+      setCategoryList(uniqueList);
     } catch {
       // Retain populated list
     } finally {
@@ -313,6 +352,13 @@ export default function SellerCategoriesScreen() {
 
   useEffect(() => {
     fetchCategoriesLive();
+  }, [fetchCategoriesLive]);
+
+  useEffect(() => {
+    const unsub = onCatalogUpdate(() => {
+      fetchCategoriesLive();
+    });
+    return unsub;
   }, [fetchCategoriesLive]);
 
   const openAddModal = () => {
@@ -347,6 +393,8 @@ export default function SellerCategoriesScreen() {
 
     setIsSubmitting(true);
     const slug = formSlug.trim() || formName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const parentCat = formParentId ? categoryList.find((c) => c.id === formParentId) : undefined;
+
     const payload: SellerCategory = {
       id: editingCategory ? editingCategory.id : 'cat-' + Date.now(),
       name: formName.trim(),
@@ -355,6 +403,7 @@ export default function SellerCategoriesScreen() {
       image: formImage.trim() ? getValidImage(formImage.trim()) : undefined,
       level: formLevel,
       parent_id: formParentId || null,
+      parent_name: parentCat?.name,
       is_active: formIsActive,
       product_count: editingCategory?.product_count || 0,
     };
@@ -374,18 +423,7 @@ export default function SellerCategoriesScreen() {
     setIsSubmitting(false);
 
     try {
-      if (editingCategory) {
-        await patch(`/categories/${editingCategory.id}`, payload);
-      } else {
-        const created = await post('/categories', payload);
-        if (created && created.id) {
-          setCategoryList((prev) => {
-            const next = prev.map((c) => (c.id === payload.id ? { ...c, id: String(created.id) } : c));
-            setItem('grabit_seller_categories', next).catch(() => {});
-            return next;
-          });
-        }
-      }
+      await syncSaveCategory(payload);
     } catch {
       // Local instant update already completed
     }
@@ -398,7 +436,7 @@ export default function SellerCategoriesScreen() {
     await setItem('grabit_seller_categories', updated).catch(() => {});
     showToast(`Category "${cat.name}" is now ${nextState ? 'Active' : 'Inactive'}`, 'info');
     try {
-      await patch(`/categories/${cat.id}`, { is_active: nextState });
+      await syncSaveCategory({ ...cat, is_active: nextState });
     } catch {}
   };
 
@@ -412,7 +450,7 @@ export default function SellerCategoriesScreen() {
     setDeleteModalCat(null);
 
     try {
-      await del(`/categories/${target.id}`);
+      await syncDeleteCategory(target.id);
     } catch {
       // Local instant update already completed
     }
@@ -529,8 +567,16 @@ export default function SellerCategoriesScreen() {
           <View style={styles.gridTwoColRow}>
             {(searchQuery.trim() ? filteredCategories : filteredCategories.filter((c) => c.level === 'root' || !c.parent_id)).map((item, idx) => {
               const subCount = categoryList.filter((c) => c.parent_id === item.id).length || 3;
+              const isEditingThis = editingCategory?.id === item.id;
               return (
-                <View key={item.id ? String(item.id) : 'cat-' + idx} style={styles.gridCategoryCard}>
+                <Pressable
+                  key={item.id ? String(item.id) : 'cat-' + idx}
+                  style={[
+                    styles.gridCategoryCard,
+                    isEditingThis && styles.gridCategoryCardEditing,
+                  ]}
+                  onPress={() => openEditModal(item)}
+                >
                   {/* Category Image with Overlaid Active Status Badge */}
                   <View style={styles.catImageBox}>
                     {item.image ? (
@@ -547,10 +593,16 @@ export default function SellerCategoriesScreen() {
                         {item.is_active ? 'Active' : 'Inactive'}
                       </Text>
                     </View>
+
+                    {isEditingThis ? (
+                      <View style={styles.editingPillBadge}>
+                        <Text style={styles.editingPillText}>Editing</Text>
+                      </View>
+                    ) : null}
                   </View>
 
                   {/* Category Title & Subtitle */}
-                  <Text style={styles.catTitle} numberOfLines={1}>
+                  <Text style={[styles.catTitle, isEditingThis && { color: COLORS.primary }]} numberOfLines={1}>
                     {item.name}
                   </Text>
                   <Text style={styles.catSubTitle} numberOfLines={1}>
@@ -566,7 +618,10 @@ export default function SellerCategoriesScreen() {
 
                     <Pressable
                       style={[styles.activePillSwitch, item.is_active && styles.activePillSwitchOn]}
-                      onPress={() => handleToggleActive(item)}
+                      onPress={(e) => {
+                        e?.stopPropagation?.();
+                        handleToggleActive(item);
+                      }}
                     >
                       <View style={[styles.switchDot, item.is_active && styles.switchDotOn]} />
                       <Text style={[styles.switchText, item.is_active && styles.switchTextOn]}>
@@ -577,17 +632,28 @@ export default function SellerCategoriesScreen() {
 
                   {/* Side-by-Side Action Buttons */}
                   <View style={styles.cardActionsRow}>
-                    <Pressable style={styles.gridEditBtn} onPress={() => openEditModal(item)}>
-                      <Edit2 size={12} color="#334155" style={{ marginRight: 4 }} />
-                      <Text style={styles.gridEditBtnText}>Edit</Text>
+                    <Pressable
+                      style={[styles.gridEditBtn, isEditingThis && styles.gridEditBtnActive]}
+                      onPress={() => openEditModal(item)}
+                    >
+                      <Edit2 size={12} color={isEditingThis ? COLORS.primary : '#334155'} style={{ marginRight: 4 }} />
+                      <Text style={[styles.gridEditBtnText, isEditingThis && { color: COLORS.primary, fontWeight: '800' }]}>
+                        {isEditingThis ? 'Editing' : 'Edit'}
+                      </Text>
                     </Pressable>
 
-                    <Pressable style={styles.gridDeleteBtn} onPress={() => setDeleteModalCat(item)}>
+                    <Pressable
+                      style={styles.gridDeleteBtn}
+                      onPress={(e) => {
+                        e?.stopPropagation?.();
+                        setDeleteModalCat(item);
+                      }}
+                    >
                       <Trash2 size={12} color="#EF4444" style={{ marginRight: 4 }} />
                       <Text style={styles.gridDeleteBtnText}>Delete</Text>
                     </Pressable>
                   </View>
-                </View>
+                </Pressable>
               );
             })}
             {filteredCategories.length === 0 ? (
@@ -603,35 +669,55 @@ export default function SellerCategoriesScreen() {
         <ScrollView contentContainerStyle={styles.listContent} showsVerticalScrollIndicator={false}>
           {rootCategories.map((root) => {
             const subcats = categoryList.filter((c) => c.parent_id === root.id);
+            const isEditingRoot = editingCategory?.id === root.id;
             return (
-              <View key={root.id} style={styles.treeCard}>
-                <View style={styles.treeHeader}>
+              <View key={root.id} style={[styles.treeCard, isEditingRoot && styles.treeCardEditing]}>
+                <Pressable style={styles.treeHeader} onPress={() => openEditModal(root)}>
                   {root.image ? (
                     <Image source={{ uri: root.image }} style={styles.treeThumb} resizeMode="cover" />
                   ) : (
                     <Text style={styles.iconEmoji}>{root.icon || '📦'}</Text>
                   )}
-                  <Text style={styles.treeTitle}>{root.name}</Text>
+                  <Text style={[styles.treeTitle, isEditingRoot && { color: COLORS.primary }]}>{root.name}</Text>
+                  {isEditingRoot ? (
+                    <View style={styles.treeEditingBadge}>
+                      <Text style={styles.treeEditingBadgeText}>Editing</Text>
+                    </View>
+                  ) : null}
                   <Pressable style={{ marginLeft: 'auto' }} onPress={() => openEditModal(root)}>
                     <Edit2 size={14} color={COLORS.primary} />
                   </Pressable>
-                </View>
+                </Pressable>
                 {subcats.length > 0 ? (
                   <View style={styles.subList}>
-                    {subcats.map((sub) => (
-                      <View key={sub.id} style={styles.subRow}>
-                        <ChevronRight size={14} color={COLORS.textSecondary} style={{ marginRight: 6 }} />
-                        {sub.image ? (
-                          <Image source={{ uri: sub.image }} style={styles.subThumb} resizeMode="cover" />
-                        ) : (
-                          <Text style={styles.subEmoji}>{sub.icon || '📁'}</Text>
-                        )}
-                        <Text style={styles.subName}>{sub.name}</Text>
-                        <Pressable style={{ marginLeft: 'auto' }} onPress={() => openEditModal(sub)}>
-                          <Edit2 size={12} color={COLORS.textSecondary} />
+                    {subcats.map((sub) => {
+                      const isEditingSub = editingCategory?.id === sub.id;
+                      return (
+                        <Pressable
+                          key={sub.id}
+                          style={[styles.subRow, isEditingSub && styles.subRowEditing]}
+                          onPress={() => openEditModal(sub)}
+                        >
+                          <ChevronRight size={14} color={COLORS.textSecondary} style={{ marginRight: 6 }} />
+                          {sub.image ? (
+                            <Image source={{ uri: sub.image }} style={styles.subThumb} resizeMode="cover" />
+                          ) : (
+                            <Text style={styles.subEmoji}>{sub.icon || '📁'}</Text>
+                          )}
+                          <Text style={[styles.subName, isEditingSub && { color: COLORS.primary, fontWeight: '700' }]}>
+                            {sub.name}
+                          </Text>
+                          {isEditingSub ? (
+                            <View style={[styles.treeEditingBadge, { marginLeft: 8 }]}>
+                              <Text style={styles.treeEditingBadgeText}>Editing</Text>
+                            </View>
+                          ) : null}
+                          <Pressable style={{ marginLeft: 'auto' }} onPress={() => openEditModal(sub)}>
+                            <Edit2 size={12} color={COLORS.textSecondary} />
+                          </Pressable>
                         </Pressable>
-                      </View>
-                    ))}
+                      );
+                    })}
                   </View>
                 ) : (
                   <Text style={styles.noSubText}>No subcategories mapped</Text>
@@ -787,10 +873,6 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
   },
-  titleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
   headerTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -803,6 +885,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 8,
+  },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   headerTitle: {
     fontSize: 18,
@@ -910,6 +996,26 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E2E8F0',
     ...SHADOWS.sm,
+  },
+  gridCategoryCardEditing: {
+    borderColor: COLORS.primary,
+    borderWidth: 2,
+    backgroundColor: '#F8FAFC',
+    ...SHADOWS.md,
+  },
+  editingPillBadge: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 10,
+  },
+  editingPillText: {
+    color: '#FFFFFF',
+    fontSize: 9.5,
+    fontWeight: '800',
   },
   catImageBox: {
     width: '100%',
@@ -1029,6 +1135,10 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#E2E8F0',
+  },
+  gridEditBtnActive: {
+    borderColor: COLORS.primary,
+    backgroundColor: COLORS.primaryLight,
   },
   gridEditBtnText: {
     fontSize: 11,
@@ -1177,6 +1287,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
   },
+  treeCardEditing: {
+    borderColor: COLORS.primary,
+    borderWidth: 1.5,
+    backgroundColor: '#F8FAFC',
+  },
   treeHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1188,6 +1303,18 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     marginLeft: 8,
   },
+  treeEditingBadge: {
+    backgroundColor: COLORS.primaryLight,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 8,
+    marginLeft: 8,
+  },
+  treeEditingBadgeText: {
+    fontSize: 10,
+    color: COLORS.primary,
+    fontWeight: '800',
+  },
   subList: {
     marginLeft: 12,
     borderLeftWidth: 2,
@@ -1198,6 +1325,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     marginVertical: 4,
+  },
+  subRowEditing: {
+    backgroundColor: COLORS.primaryLight,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+    borderRadius: 8,
   },
   subEmoji: {
     fontSize: 14,
@@ -1215,15 +1348,19 @@ const styles = StyleSheet.create({
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: 'rgba(15, 23, 42, 0.35)',
     justifyContent: 'flex-end',
+    alignItems: 'center',
   },
   modalContainer: {
     backgroundColor: '#FFFFFF',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    maxHeight: '85%',
+    maxHeight: '80%',
+    width: '100%',
+    maxWidth: 560,
     padding: SPACING.md,
+    ...SHADOWS.lg,
   },
   modalHeader: {
     flexDirection: 'row',

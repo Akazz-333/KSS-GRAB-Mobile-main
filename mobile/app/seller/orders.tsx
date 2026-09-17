@@ -19,6 +19,8 @@ import { Order } from '../../types';
 export { Order };
 import { formatDisplayOrderId, isSameOrderId } from '../../utils/orderUtils';
 import { useToast } from '../../context/ToastContext';
+import { useFocusEffect } from 'expo-router';
+import { getSynchronizedRiders, onPartnersUpdate } from '../../services/partners';
 import { COLORS, SPACING, SHADOWS } from '../../constants/theme';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
@@ -41,9 +43,7 @@ import {
   RefreshCw,
   Download,
   Trash2,
-  ArrowLeft,
 } from 'lucide-react-native';
-import { useRouter } from 'expo-router';
 
 export interface FleetRider {
   id: string;
@@ -87,7 +87,6 @@ export const INITIAL_ORDERS: Order[] = [];
 type OrderTab = 'ALL' | 'PLACED' | 'PREPARING' | 'READY_FOR_PICKUP' | 'OUT_FOR_DELIVERY' | 'DELIVERED' | 'CANCELLED';
 
 export default function SellerOrdersScreen() {
-  const router = useRouter();
   const { showToast } = useToast();
   // ── Real-time orders via SSE (web) or 3s polling (native) ──────────────────
   const {
@@ -218,20 +217,12 @@ export default function SellerOrdersScreen() {
   // Packing Slip & Reassign Modal State
   const [selectedPackingSlip, setSelectedPackingSlip] = useState<Order | null>(null);
   const [selectedReassignOrder, setSelectedReassignOrder] = useState<Order | null>(null);
-  // Fetch real riders from backend with fallback
+  // Fetch real riders from backend with multi-source fallback
   const fetchRiders = useCallback(async () => {
     try {
-      const res = await get('/delivery/riders');
-      if (res && Array.isArray(res) && res.length > 0) {
-        const mapped: FleetRider[] = res.map((r: any) => ({
-          id: r.id || r.phone,
-          name: r.full_name || r.name || 'Rider',
-          phone: r.phone || '',
-          vehicle: r.vehicle_type || 'Delivery Vehicle',
-          rating: Number(r.rating || 4.8),
-          distance: r.distance || 'Nearby',
-        }));
-        setFleetRiders(mapped);
+      const riders = await getSynchronizedRiders();
+      if (Array.isArray(riders) && riders.length > 0) {
+        setFleetRiders(riders);
       } else {
         setFleetRiders((prev) => (prev.length > 0 ? prev : FLEET_RIDERS));
       }
@@ -239,6 +230,21 @@ export default function SellerOrdersScreen() {
       setFleetRiders((prev) => (prev.length > 0 ? prev : FLEET_RIDERS));
     }
   }, []);
+
+  // Subscribe to live partner updates across portals
+  useEffect(() => {
+    const unsub = onPartnersUpdate(() => {
+      fetchRiders();
+    });
+    return () => unsub();
+  }, [fetchRiders]);
+
+  // Refresh riders whenever the seller returns to the screen
+  useFocusEffect(
+    useCallback(() => {
+      fetchRiders();
+    }, [fetchRiders])
+  );
 
   // Fetch initial cached orders & riders once on mount
   useEffect(() => {
@@ -408,11 +414,9 @@ export default function SellerOrdersScreen() {
       invalidateOrdersCache();
       refreshOrders();
     } catch (err: any) {
-      if (previousOrders.length > 0) {
-        setOrders(previousOrders);
-        setItem('grabit_seller_orders', previousOrders).catch(() => {});
-      }
-      showToast(err?.message || `Failed to assign rider to order #${formatDisplayOrderId(order)}`, 'error');
+      console.warn('[AssignRider] Backend assignment fallback:', err);
+      // Retain optimistic assignment locally so seller and packing slips preserve assigned rider
+      invalidateOrdersCache();
     }
   };
 
@@ -867,19 +871,6 @@ export default function SellerOrdersScreen() {
       {/* HEADER BAR */}
       <View style={styles.topHeader}>
         <View style={styles.titleRow}>
-          <Pressable
-            style={styles.backBtnCircle}
-            onPress={() => {
-              if (router.canGoBack()) {
-                router.back();
-              } else {
-                router.replace('/seller' as any);
-              }
-            }}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <ArrowLeft size={18} color="#0F172A" />
-          </Pressable>
           <ShoppingBag size={22} color={COLORS.primary} style={{ marginRight: 8 }} />
           <Text style={styles.headerTitle}>Live Orders ({orders.length})</Text>
           {/* Live indicator dot */}
@@ -1330,15 +1321,6 @@ const styles = StyleSheet.create({
   titleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-  },
-  backBtnCircle: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: '#F1F5F9',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 8,
   },
   headerTitle: {
     fontSize: 18,

@@ -16,6 +16,7 @@ import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Product } from '../types';
 import { searchProducts } from '../data/products';
+import { getSynchronizedProducts, getSynchronizedCategories, onCatalogUpdate } from '../services/catalog';
 import { optimizeImageUrl, getValidImage, DEFAULT_FALLBACK_IMAGE } from '../services/cloudinary';
 import { COLORS, SPACING, SHADOWS } from '../constants/theme';
 import ProductSuggestionModal from './ProductSuggestionModal';
@@ -77,6 +78,36 @@ export function SearchAutocomplete({
   const [oftenSearched, setOftenSearched] = useState<Array<{ query: string; count: number; timestamp: number }>>([]);
   const [isSuggestionModalOpen, setIsSuggestionModalOpen] = useState(false);
   const [suggestCategory, setSuggestCategory] = useState('Snacks & Munchies');
+  const [syncedProducts, setSyncedProducts] = useState<Product[]>([]);
+  const [dynamicCategories, setDynamicCategories] = useState<any[]>([]);
+
+  useEffect(() => {
+    let isMounted = true;
+    const load = async () => {
+      try {
+        const [prods, cats] = await Promise.all([
+          getSynchronizedProducts(),
+          getSynchronizedCategories(),
+        ]);
+        if (isMounted) {
+          if (prods && prods.length > 0) setSyncedProducts(prods);
+          if (cats && cats.length > 0) setDynamicCategories(cats);
+        }
+      } catch {}
+    };
+    load();
+    return () => {
+      isMounted = false;
+    };
+  }, [isSearchFocused]);
+
+  useEffect(() => {
+    const unsub = onCatalogUpdate(() => {
+      getSynchronizedProducts().then(setSyncedProducts).catch(() => {});
+      getSynchronizedCategories().then(setDynamicCategories).catch(() => {});
+    });
+    return () => unsub();
+  }, []);
 
   useEffect(() => {
     if (initialQuery !== undefined) {
@@ -126,21 +157,55 @@ export function SearchAutocomplete({
   // 1. Matching Products scored by search algorithm
   const matchingProducts = useMemo(() => {
     if (!searchQuery.trim()) return [];
+    const q = searchQuery.toLowerCase().trim();
+    const source = syncedProducts.length > 0 ? syncedProducts : [];
+    if (source.length > 0) {
+      const tokens = q.split(/\s+/).filter(Boolean);
+      const matched = source.filter((p) => {
+        const name = (p.name || '').toLowerCase();
+        const brand = (p.brand || '').toLowerCase();
+        const cat = (p.category || '').toLowerCase();
+        return tokens.every((t) => name.includes(t) || brand.includes(t) || cat.includes(t));
+      });
+      if (matched.length > 0) return matched.slice(0, 5);
+    }
     return searchProducts(searchQuery.trim()).slice(0, 5);
-  }, [searchQuery]);
+  }, [searchQuery, syncedProducts]);
 
   // 2. Category Suggestions matching React Web Header.jsx
   const categorySuggestions = useMemo(() => {
     if (!searchQuery.trim()) return [];
     const q = searchQuery.toLowerCase().trim();
-    return ALL_CATEGORY_KEYS.filter((c) => {
+    const baseSuggestions = ALL_CATEGORY_KEYS.filter((c) => {
       return (
         c.slug.includes(q) ||
         c.name.toLowerCase().includes(q) ||
         c.words.some((w) => q.includes(w) || w.includes(q))
       );
-    }).slice(0, 2);
-  }, [searchQuery]);
+    });
+
+    const dynamicSuggestions = dynamicCategories
+      .filter((c) => {
+        const name = (c.name || '').toLowerCase();
+        const slug = (c.slug || '').toLowerCase();
+        return name.includes(q) || slug.includes(q);
+      })
+      .map((c) => ({
+        slug: c.slug || c.id,
+        name: c.name,
+        words: [c.name.toLowerCase()],
+      }));
+
+    const combined = [...dynamicSuggestions, ...baseSuggestions];
+    const seen = new Set<string>();
+    const unique = combined.filter((c) => {
+      if (seen.has(c.slug)) return false;
+      seen.add(c.slug);
+      return true;
+    });
+
+    return unique.slice(0, 2);
+  }, [searchQuery, dynamicCategories]);
 
   // 3. Brand Suggestions matching React Web Header.jsx
   const brandSuggestions = useMemo(() => {

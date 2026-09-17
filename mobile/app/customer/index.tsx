@@ -26,6 +26,7 @@ import { get } from '../../services/api';
 import { Product, Category } from '../../types';
 import { products as localProducts } from '../../data/products';
 import { categories as localCategories, getCanonicalSlug } from '../../data/categories';
+import { getSynchronizedCategories, getSynchronizedProducts, onCatalogUpdate } from '../../services/catalog';
 import { getCloudinaryUrl, getValidImage, optimizeImageUrl, DEFAULT_FALLBACK_IMAGE } from '../../services/cloudinary';
 import { COLORS, SPACING, SHADOWS } from '../../constants/theme';
 import {
@@ -390,96 +391,33 @@ export default function CustomerHomeScreen() {
 
   const fetchHomeData = useCallback(async (isMounted: boolean) => {
     try {
-      const [catsRes, prodsRes] = await Promise.all([
-        get<Category[]>('/categories'),
-        get<any[]>('/products'),
+      const [syncedCats, syncedProds] = await Promise.all([
+        getSynchronizedCategories(),
+        getSynchronizedProducts(),
       ]);
 
       if (!isMounted) return;
       lastFetchTimeRef.current = Date.now();
 
-      if (catsRes && Array.isArray(catsRes) && catsRes.length > 0) {
-        // Build API lookup map using canonical slug and normalized category name
-        const apiCategoryMap = new Map<string, any>();
-        catsRes.forEach((c: any) => {
-          const rawSlug = c.slug || c.id || '';
-          const canonicalKey = getCanonicalSlug(rawSlug);
-          const nameKey = (c.name || '').toLowerCase().trim();
-          if (canonicalKey) apiCategoryMap.set(canonicalKey, c);
-          if (nameKey) apiCategoryMap.set(nameKey, c);
-        });
-
-        // Merge API response into localCategories (all 23 entries), preserving Cloudinary URLs, canonical slugs, icons, and names
-        const mergedCats = localCategories.map((lc) => {
-          const lcCanonical = getCanonicalSlug(lc.slug);
-          const lcNameLower = lc.name.toLowerCase().trim();
-          const apiMatch = apiCategoryMap.get(lcCanonical) || apiCategoryMap.get(lcNameLower);
-
-          if (!apiMatch) return lc;
-
-          const validApiImage =
-            apiMatch.image && typeof apiMatch.image === 'string' && apiMatch.image.trim().length > 0
-              ? apiMatch.image.trim()
-              : apiMatch.image_url && typeof apiMatch.image_url === 'string' && apiMatch.image_url.trim().length > 0
-              ? apiMatch.image_url.trim()
-              : null;
-
-          const validApiIcon =
-            apiMatch.icon && typeof apiMatch.icon === 'string' && apiMatch.icon.trim().length > 0
-              ? apiMatch.icon.trim()
-              : null;
-
-          return {
-            ...lc,
-            ...apiMatch,
-            id: lc.id, // Preserve consistent local ID
-            name: lc.name, // Keep clean display name
-            slug: lcCanonical, // Preserve canonical slug
-            image: validApiImage || lc.image, // Prefer valid API image, otherwise preserve local Cloudinary URL
-            icon: validApiIcon || lc.icon, // Prefer valid API icon, otherwise preserve local icon
-            itemCount: apiMatch.itemCount || apiMatch.item_count || lc.itemCount,
-          };
-        });
-
-        setCategories(mergedCats);
+      if (syncedCats && Array.isArray(syncedCats) && syncedCats.length > 0) {
+        setCategories(syncedCats);
       }
 
-      if (prodsRes && Array.isArray(prodsRes) && prodsRes.length > 0) {
-        const normalized: Product[] = prodsRes.map((p: any) => {
-          const rawCatName =
-            (typeof p.categories === 'object' && p.categories?.name)
-              ? p.categories.name
-              : (Array.isArray(p.categories) && p.categories[0]?.name)
-              ? p.categories[0].name
-              : p.category || p.category_slug || p.name || '';
-
-          return {
-            ...p,
-            id: String(p.id),
-            name: p.name,
-            price: Number(p.price || 0),
-            originalPrice: p.originalPrice || p.original_price || Math.round((p.price || 0) * 1.25),
-            discountPercent: p.discountPercent || p.discount_percent || 15,
-            image: getValidImage(p.image_url || p.image),
-            category: getCanonicalSlug(rawCatName),
-            inStock: p.inStock ?? (p.stock !== undefined ? p.stock > 0 : true),
-            rating: p.rating || 4.8,
-            reviewCount: p.reviewCount || p.reviews_count || 120,
-          };
-        });
-
-        const mergedMap = new Map<string, Product>();
-        localProducts.forEach((lp) => mergedMap.set(String(lp.id), lp));
-        normalized.forEach((np) => mergedMap.set(String(np.id), np));
-
-        const allProds = Array.from(mergedMap.values());
-        const sorted = [...allProds].sort((a, b) => (b.rating || 0) - (a.rating || 0));
+      if (syncedProds && Array.isArray(syncedProds) && syncedProds.length > 0) {
+        const sorted = [...syncedProds].sort((a, b) => (b.rating || 0) - (a.rating || 0));
         setPopularProducts(sorted);
-        const snacks = allProds.filter(p => (p.category || '').toLowerCase().includes('snack') || (p.name || '').toLowerCase().includes('maggi') || (p.name || '').toLowerCase().includes('noodle') || (p.name || '').toLowerCase().includes('chip') || (p.name || '').toLowerCase().includes('lays') || (p.name || '').toLowerCase().includes('dorito'));
+        const snacks = syncedProds.filter(p =>
+          (p.category || '').toLowerCase().includes('snack') ||
+          (p.name || '').toLowerCase().includes('maggi') ||
+          (p.name || '').toLowerCase().includes('noodle') ||
+          (p.name || '').toLowerCase().includes('chip') ||
+          (p.name || '').toLowerCase().includes('lays') ||
+          (p.name || '').toLowerCase().includes('dorito')
+        );
         setSnacksProducts(snacks.length > 0 ? snacks : sorted);
       }
     } catch (error) {
-      if (isMounted) console.log('[Home] API Fetch failed, showing local fallback data');
+      if (isMounted) console.log('[Home] Catalog sync failed, showing local fallback data');
     } finally {
       if (isMounted) setIsInitialLoading(false);
     }
@@ -493,13 +431,20 @@ export default function CustomerHomeScreen() {
     };
   }, [fetchHomeData]);
 
+  // Real-time catalog update listener (seller portal -> customer portal)
+  useEffect(() => {
+    const unsub = onCatalogUpdate(() => {
+      fetchHomeData(true);
+    });
+    return () => {
+      unsub();
+    };
+  }, [fetchHomeData]);
+
   useFocusEffect(
     useCallback(() => {
       let isMounted = true;
-      // Stale cache guard: skip fetching if data was fetched less than 30s ago
-      if (Date.now() - lastFetchTimeRef.current > 30000) {
-        fetchHomeData(isMounted);
-      }
+      fetchHomeData(isMounted);
       return () => {
         isMounted = false;
       };
