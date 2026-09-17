@@ -735,72 +735,58 @@ export default function CheckoutPage() {
 
       <View style={styles.dividerLine} />
 
-      {/* ── COUPON SECTION IN ORDER SUMMARY ── */}
-      {appliedCoupon ? (
-        <View style={styles.summaryCouponAppliedBox}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, gap: 10 }}>
-            <View style={styles.summaryCouponCheckCircle}>
-              <CheckCircle2 size={16} color="#16A34A" />
-            </View>
-            <View style={{ flex: 1 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <Text style={styles.summaryCouponCodeText}>{appliedCoupon.code}</Text>
-                <View style={styles.summaryCouponAppliedTag}>
-                  <Text style={styles.summaryCouponAppliedTagText}>APPLIED</Text>
+      {/* ── COUPON SECTION (DELIVERY PAGE ONLY - IDENTICAL TO CART PAGE) ── */}
+      {step === 0 && (
+        <>
+          <View style={{ marginVertical: 6 }}>
+            {appliedCoupon ? (
+              <View style={styles.appliedCouponBox}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, gap: 10 }}>
+                  <CheckCircle2 size={20} color="#10B981" />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.appliedCouponTitle}>
+                      Coupon "{appliedCoupon.code}" Applied!
+                    </Text>
+                    <Text style={styles.appliedCouponSub}>
+                      {appliedCoupon.discountType === 'free_delivery'
+                        ? 'Free Express Delivery unlocked'
+                        : `Saved extra ₹${couponDiscount} on this order`}
+                    </Text>
+                  </View>
                 </View>
+                <Pressable
+                  style={styles.removeCouponBtn}
+                  onPress={() => {
+                    removeCoupon();
+                    showToast('Coupon removed', 'info');
+                  }}
+                >
+                  <Text style={styles.removeCouponText}>Remove</Text>
+                </Pressable>
               </View>
-              <Text style={styles.summaryCouponSubText}>
-                {appliedCoupon.discountType === 'free_delivery'
-                  ? 'Free Delivery unlocked'
-                  : `Extra ₹${couponDiscount} saved`}
-              </Text>
-            </View>
+            ) : (
+              <Pressable
+                style={styles.unlockedCouponBanner}
+                onPress={() => setIsCouponModalOpen(true)}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                  <Tag size={20} color="#10B981" />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.unlockedCouponTitle}>
+                      {availableCouponsCount} Coupons Available
+                    </Text>
+                    <Text style={styles.unlockedCouponSub}>
+                      Save up to ₹{maxSavings} extra with promo codes
+                    </Text>
+                  </View>
+                </View>
+                <Text style={styles.applyArrowText}>Apply →</Text>
+              </Pressable>
+            )}
           </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <Pressable
-              style={styles.summaryCouponActionBtn}
-              onPress={() => setIsCouponModalOpen(true)}
-            >
-              <Text style={styles.summaryCouponActionText}>Change</Text>
-            </Pressable>
-            <Pressable
-              style={styles.summaryCouponRemoveBtn}
-              onPress={() => {
-                removeCoupon();
-                showToast('Coupon removed', 'info');
-              }}
-            >
-              <Text style={styles.summaryCouponRemoveText}>Remove</Text>
-            </Pressable>
-          </View>
-        </View>
-      ) : (
-        <Pressable
-          style={styles.summaryCouponPromptBox}
-          onPress={() => setIsCouponModalOpen(true)}
-        >
-          <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, gap: 10 }}>
-            <View style={styles.summaryCouponTagCircle}>
-              <Tag size={16} color="#0071E3" />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.summaryCouponPromptTitle}>
-                {availableCouponsCount > 0
-                  ? `${availableCouponsCount} Coupons Available`
-                  : 'Apply Coupon / Promo Code'}
-              </Text>
-              <Text style={styles.summaryCouponPromptSub}>
-                Save up to ₹{maxSavings} extra with promo codes
-              </Text>
-            </View>
-          </View>
-          <View style={styles.summaryCouponApplyPill}>
-            <Text style={styles.summaryCouponApplyPillText}>Apply →</Text>
-          </View>
-        </Pressable>
+          <View style={styles.dividerLine} />
+        </>
       )}
-
-      <View style={styles.dividerLine} />
 
       <View style={styles.billRow}>
         <Text style={styles.billLabel}>Item Total ({totalItems} items)</Text>
@@ -975,46 +961,6 @@ export default function CheckoutPage() {
                 </Pressable>
               </View>
             ) : null}
-
-            {/* Coupon Banner in Step 0 (Delivery) */}
-            {appliedCoupon ? (
-              <View style={styles.activeCouponBanner}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-                  <Tag size={16} color="#0071E3" style={{ marginRight: 8 }} />
-                  <Text style={styles.activeCouponText}>
-                    Coupon <Text style={{ fontWeight: '900' }}>{appliedCoupon.code}</Text> Active — Saving ₹{couponDiscount}
-                  </Text>
-                </View>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                  <Pressable onPress={() => setIsCouponModalOpen(true)}>
-                    <Text style={{ fontSize: 11, fontWeight: '800', color: '#0071E3' }}>Change</Text>
-                  </Pressable>
-                  <Text style={styles.appliedBadgeText}>APPLIED</Text>
-                </View>
-              </View>
-            ) : (
-              <Pressable
-                style={styles.deliveryCouponBanner}
-                onPress={() => setIsCouponModalOpen(true)}
-              >
-                <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-                  <View style={styles.deliveryCouponIconBadge}>
-                    <Tag size={16} color="#0071E3" />
-                  </View>
-                  <View style={{ flex: 1, marginLeft: 10 }}>
-                    <Text style={styles.deliveryCouponBannerTitle}>
-                      Have a Coupon or Promo Code?
-                    </Text>
-                    <Text style={styles.deliveryCouponBannerSub}>
-                      {availableCouponsCount} offers available • Save up to ₹{maxSavings}
-                    </Text>
-                  </View>
-                </View>
-                <View style={styles.deliveryCouponApplyBtn}>
-                  <Text style={styles.deliveryCouponApplyBtnText}>View Offers →</Text>
-                </View>
-              </Pressable>
-            )}
 
             {/* Main Delivery Address Card */}
             <View style={styles.card}>
@@ -2621,155 +2567,69 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
 
-  /* ── Delivery Page Coupon Banner ── */
-  deliveryCouponBanner: {
+  /* ── Coupons & Offers Card (Identical to Cart Page) ── */
+  unlockedCouponBanner: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#EFF6FF',
+    backgroundColor: '#ECFDF5',
     borderWidth: 1.5,
-    borderColor: '#BFDBFE',
-    borderRadius: 14,
+    borderColor: '#A7F3D0',
     paddingHorizontal: 14,
-    paddingVertical: 12,
-  },
-  deliveryCouponIconBadge: {
-    width: 32,
-    height: 32,
+    paddingVertical: 14,
     borderRadius: 16,
-    backgroundColor: '#DBEAFE',
-    justifyContent: 'center',
-    alignItems: 'center',
   },
-  deliveryCouponBannerTitle: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#1E3A8A',
+  unlockedCouponTitle: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: '#065F46',
   },
-  deliveryCouponBannerSub: {
+  unlockedCouponSub: {
     fontSize: 11,
     fontWeight: '600',
-    color: '#3B82F6',
-    marginTop: 1,
+    color: '#047857',
+    marginTop: 2,
   },
-  deliveryCouponApplyBtn: {
-    backgroundColor: '#0071E3',
+  applyArrowText: {
+    fontSize: 13,
+    fontWeight: '900',
+    color: '#10B981',
+  },
+
+  appliedCouponBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    borderRadius: 16,
+  },
+  appliedCouponTitle: {
+    fontSize: 13.5,
+    fontWeight: '900',
+    color: '#065F46',
+  },
+  appliedCouponSub: {
+    fontSize: 11.5,
+    fontWeight: '600',
+    color: '#047857',
+    marginTop: 2,
+  },
+  removeCouponBtn: {
+    backgroundColor: '#FEE2E2',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    paddingVertical: 5,
     paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
+    borderRadius: 10,
   },
-  deliveryCouponApplyBtnText: {
+  removeCouponText: {
     fontSize: 12,
     fontWeight: '800',
-    color: '#FFFFFF',
-  },
-
-  /* ── Order Summary Coupon Box ── */
-  summaryCouponPromptBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
-    borderStyle: 'dashed',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    marginVertical: 4,
-  },
-  summaryCouponTagCircle: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: '#EFF6FF',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  summaryCouponPromptTitle: {
-    fontSize: 12.5,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
-  summaryCouponPromptSub: {
-    fontSize: 11,
-    fontWeight: '500',
-    color: '#64748B',
-  },
-  summaryCouponApplyPill: {
-    backgroundColor: '#0071E3',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 8,
-  },
-  summaryCouponApplyPillText: {
-    fontSize: 11.5,
-    fontWeight: '800',
-    color: '#FFFFFF',
-  },
-
-  summaryCouponAppliedBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#F0FDF4',
-    borderWidth: 1.5,
-    borderColor: '#BBF7D0',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    marginVertical: 4,
-  },
-  summaryCouponCheckCircle: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: '#DCFCE7',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  summaryCouponCodeText: {
-    fontSize: 13,
-    fontWeight: '900',
-    color: '#166534',
-  },
-  summaryCouponAppliedTag: {
-    backgroundColor: '#DCFCE7',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  summaryCouponAppliedTagText: {
-    fontSize: 9.5,
-    fontWeight: '900',
-    color: '#15803D',
-  },
-  summaryCouponSubText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#15803D',
-  },
-  summaryCouponActionBtn: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-    backgroundColor: '#DBEAFE',
-  },
-  summaryCouponActionText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#1D4ED8',
-  },
-  summaryCouponRemoveBtn: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-    backgroundColor: '#FEE2E2',
-  },
-  summaryCouponRemoveText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#DC2626',
+    color: '#EF4444',
   },
 
   /* ── Coupon Modal Styles ── */
