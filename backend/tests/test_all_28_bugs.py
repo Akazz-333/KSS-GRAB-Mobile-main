@@ -248,6 +248,14 @@ def test_bug_22_create_product_unmatched_category(client):
     product = resp.json()
     assert product.get("category_id") is None
 
+    # Clean up test product so it doesn't pollute the live catalog
+    if product.get("id"):
+        try:
+            client.delete(f"/api/products/{product['id']}", headers=seller_headers)
+        except Exception:
+            pass
+
+
 
 # ------------------------------------------------------------------------------
 # Bug 23: Dynamic Join Date Calculation
