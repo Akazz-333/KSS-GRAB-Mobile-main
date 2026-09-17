@@ -10,9 +10,10 @@ import {
   Switch,
   StyleSheet,
   ActivityIndicator,
+  RefreshControl,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-import { get, post, patch, del, uploadImage } from '../../services/api';
+import { get, post, patch, del, uploadImage, clearApiCache } from '../../services/api';
 import { getCloudinaryUrl } from '../../services/cloudinary';
 import { Product } from '../../types';
 import { useToast } from '../../context/ToastContext';
@@ -35,6 +36,7 @@ export default function SellerProductsScreen() {
   const { showToast } = useToast();
   const [productList, setProductList] = useState<Product[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
 
   // Search & Filter
   const [searchQuery, setSearchQuery] = useState('');
@@ -103,6 +105,16 @@ export default function SellerProductsScreen() {
 
   useEffect(() => {
     fetchProductsLive();
+  }, [fetchProductsLive]);
+
+  const handleRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      clearApiCache();
+      await fetchProductsLive();
+    } finally {
+      setIsRefreshing(false);
+    }
   }, [fetchProductsLive]);
 
   const openAddModal = () => {
@@ -320,6 +332,14 @@ export default function SellerProductsScreen() {
       <ScrollView
         showsVerticalScrollIndicator={false}
         scrollEventThrottle={16}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={handleRefresh}
+            colors={[COLORS.primary]}
+            tintColor={COLORS.primary}
+          />
+        }
         onScroll={({ nativeEvent }) => {
           const isCloseToBottom =
             nativeEvent.layoutMeasurement.height + nativeEvent.contentOffset.y >=
