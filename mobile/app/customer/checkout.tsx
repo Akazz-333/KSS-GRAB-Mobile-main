@@ -1189,7 +1189,7 @@ export default function CheckoutPage() {
                   </View>
                 </View>
               ) : modalTab === 'map' ? (
-                <View style={{ height: 350 }}>
+                <View style={{ height: 235 }}>
                   <DeliveryLocationMapPicker
                     initialLat={13.014333}
                     initialLng={77.646000}
@@ -1206,7 +1206,7 @@ export default function CheckoutPage() {
                       handleSelectAddress(newLoc);
                       setModalTab('list');
                     }}
-                    height={300}
+                    height={180}
                   />
                   <Pressable
                     style={[styles.cancelFormBtn, { marginTop: 10 }]}
