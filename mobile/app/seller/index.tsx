@@ -8,6 +8,7 @@ import {
   StyleSheet,
   RefreshControl,
   Platform,
+  BackHandler,
 } from 'react-native';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
@@ -34,6 +35,7 @@ import {
   Package,
   Flame,
   ArrowRight,
+  ArrowLeft,
   Check,
 } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
@@ -43,21 +45,32 @@ import { Order } from './orders';
 
 export default function SellerDashboardScreen() {
   const router = useRouter();
-  const { logout } = useAuth();
+  const { logout, switchRole } = useAuth();
   const { showToast } = useToast();
+
+  const handleBackNavigation = useCallback(() => {
+    if (router.canGoBack()) {
+      switchRole('customer');
+      router.back();
+    } else {
+      switchRole('customer');
+      router.replace('/customer' as any);
+    }
+    return true;
+  }, [router, switchRole]);
 
   useEffect(() => {
     if (Platform.OS === 'web') return;
     try {
-      const { BackHandler: BH } = require('react-native');
-      if (!BH || typeof BH.addEventListener !== 'function') return;
-      const backAction = () => true;
-      const sub = BH.addEventListener('hardwareBackPress', backAction);
+      const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+        handleBackNavigation();
+        return true;
+      });
       return () => {
         if (sub && typeof sub.remove === 'function') sub.remove();
       };
     } catch {}
-  }, []);
+  }, [handleBackNavigation]);
 
   const [storeStatus, setStoreStatus] = useState<'online' | 'busy' | 'offline'>('online');
   const [activePeriod, setActivePeriod] = useState<'daily' | 'weekly' | 'monthly' | 'yearly'>('daily');
@@ -301,6 +314,13 @@ export default function SellerDashboardScreen() {
       {/* ── 1. TOP HEADER BAR ── */}
       <View style={styles.topHeader}>
         <View style={styles.headerLeftRow}>
+          <Pressable
+            style={styles.backBtnCircle}
+            onPress={handleBackNavigation}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <ArrowLeft size={18} color="#0F172A" />
+          </Pressable>
           <View style={styles.brandContainer}>
             <View style={styles.brandIcon}>
               <Zap size={16} color="#FFFFFF" />
@@ -497,7 +517,7 @@ export default function SellerDashboardScreen() {
         {/* ── CATALOG SUMMARY CARDS BELOW REVENUE OVERVIEW ── */}
         <View style={styles.statsGrid}>
           {/* Total Products Card */}
-          <Pressable style={styles.statCard} onPress={() => router.replace('/seller/products')}>
+          <Pressable style={styles.statCard} onPress={() => router.push('/seller/products')}>
             <View style={[styles.iconCircle, { backgroundColor: '#EFF6FF' }]}>
               <Package size={18} color={COLORS.primary} />
             </View>
@@ -507,7 +527,7 @@ export default function SellerDashboardScreen() {
           </Pressable>
 
           {/* Total Category Card */}
-          <Pressable style={styles.statCard} onPress={() => router.replace('/seller/categories')}>
+          <Pressable style={styles.statCard} onPress={() => router.push('/seller/categories')}>
             <View style={[styles.iconCircle, { backgroundColor: '#F5F3FF' }]}>
               <Grid size={18} color="#8B5CF6" />
             </View>
@@ -548,7 +568,7 @@ export default function SellerDashboardScreen() {
               </View>
             </View>
 
-            <Pressable style={styles.productsNavBtn} onPress={() => router.replace('/seller/products')}>
+            <Pressable style={styles.productsNavBtn} onPress={() => router.push('/seller/products')}>
               <Text style={styles.productsNavBtnText}>Products</Text>
               <ArrowRight size={13} color="#334155" style={{ marginLeft: 3 }} />
             </Pressable>
@@ -576,7 +596,7 @@ export default function SellerDashboardScreen() {
                       <Text style={{ color: COLORS.danger, fontWeight: '700' }}>Only {item.stock} left</Text>
                     </Text>
                   </View>
-                  <Pressable style={styles.replenishBtn} onPress={() => router.replace('/seller/products')}>
+                  <Pressable style={styles.replenishBtn} onPress={() => router.push('/seller/products')}>
                     <Text style={styles.replenishBtnText}>Restock</Text>
                   </Pressable>
                 </View>
@@ -589,7 +609,7 @@ export default function SellerDashboardScreen() {
         <View style={styles.widgetCard}>
           <View style={styles.widgetHeader}>
             <Text style={styles.widgetTitle}>Top Selling Products</Text>
-            <Pressable onPress={() => router.replace('/seller/products')}>
+            <Pressable onPress={() => router.push('/seller/products')}>
               <Text style={styles.linkText}>View All ({totalProductsCount})</Text>
             </Pressable>
           </View>
@@ -673,6 +693,15 @@ const styles = StyleSheet.create({
   headerLeftRow: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  backBtnCircle: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#F1F5F9',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 8,
   },
   brandContainer: {
     flexDirection: 'row',

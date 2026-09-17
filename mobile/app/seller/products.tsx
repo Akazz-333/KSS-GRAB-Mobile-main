@@ -30,9 +30,12 @@ import {
   Clock,
   Minus,
   ChevronDown,
+  ArrowLeft,
 } from 'lucide-react-native';
+import { useRouter } from 'expo-router';
 
 export default function SellerProductsScreen() {
+  const router = useRouter();
   const { showToast } = useToast();
   const [productList, setProductList] = useState<Product[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -320,6 +323,19 @@ export default function SellerProductsScreen() {
       {/* HEADER BAR */}
       <View style={styles.topHeader}>
         <View style={styles.titleRow}>
+          <Pressable
+            style={styles.backBtnCircle}
+            onPress={() => {
+              if (router.canGoBack()) {
+                router.back();
+              } else {
+                router.replace('/seller' as any);
+              }
+            }}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <ArrowLeft size={18} color="#0F172A" />
+          </Pressable>
           <Package size={22} color={COLORS.primary} style={{ marginRight: 8 }} />
           <Text style={styles.headerTitle}>Products ({productList.length})</Text>
         </View>
@@ -749,6 +765,15 @@ const styles = StyleSheet.create({
   titleRow: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  backBtnCircle: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#F1F5F9',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 8,
   },
   headerTitle: {
     fontSize: 18,

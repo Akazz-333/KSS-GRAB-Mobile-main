@@ -27,6 +27,7 @@ import {
   Phone,
   Mail,
   User,
+  ArrowLeft,
 } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 
@@ -127,6 +128,24 @@ export default function SellerProfileScreen() {
 
   return (
     <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
+      {/* BACK BUTTON HEADER */}
+      <View style={styles.topNavBar}>
+        <Pressable
+          style={styles.backBtnCircle}
+          onPress={() => {
+            if (router.canGoBack()) {
+              router.back();
+            } else {
+              router.replace('/seller' as any);
+            }
+          }}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <ArrowLeft size={18} color="#0F172A" />
+        </Pressable>
+        <Text style={styles.topNavTitle}>Profile</Text>
+      </View>
+
       {/* STORE HEADER BANNER */}
       <View style={styles.headerCard}>
         <View style={styles.storeIconCircle}>
@@ -345,6 +364,32 @@ const styles = StyleSheet.create({
   container: {
     padding: SPACING.md,
     backgroundColor: COLORS.background,
+  },
+  topNavBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: SPACING.md,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+    marginHorizontal: -SPACING.md,
+    marginTop: -SPACING.md,
+    marginBottom: SPACING.md,
+  },
+  backBtnCircle: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#F1F5F9',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  topNavTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: COLORS.text,
   },
   headerCard: {
     backgroundColor: '#FFFFFF',

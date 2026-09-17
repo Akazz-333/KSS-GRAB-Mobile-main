@@ -41,7 +41,9 @@ import {
   RefreshCw,
   Download,
   Trash2,
+  ArrowLeft,
 } from 'lucide-react-native';
+import { useRouter } from 'expo-router';
 
 export interface FleetRider {
   id: string;
@@ -85,6 +87,7 @@ export const INITIAL_ORDERS: Order[] = [];
 type OrderTab = 'ALL' | 'PLACED' | 'PREPARING' | 'READY_FOR_PICKUP' | 'OUT_FOR_DELIVERY' | 'DELIVERED' | 'CANCELLED';
 
 export default function SellerOrdersScreen() {
+  const router = useRouter();
   const { showToast } = useToast();
   // ── Real-time orders via SSE (web) or 3s polling (native) ──────────────────
   const {
@@ -864,6 +867,19 @@ export default function SellerOrdersScreen() {
       {/* HEADER BAR */}
       <View style={styles.topHeader}>
         <View style={styles.titleRow}>
+          <Pressable
+            style={styles.backBtnCircle}
+            onPress={() => {
+              if (router.canGoBack()) {
+                router.back();
+              } else {
+                router.replace('/seller' as any);
+              }
+            }}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <ArrowLeft size={18} color="#0F172A" />
+          </Pressable>
           <ShoppingBag size={22} color={COLORS.primary} style={{ marginRight: 8 }} />
           <Text style={styles.headerTitle}>Live Orders ({orders.length})</Text>
           {/* Live indicator dot */}
@@ -1314,6 +1330,15 @@ const styles = StyleSheet.create({
   titleRow: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  backBtnCircle: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#F1F5F9',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 8,
   },
   headerTitle: {
     fontSize: 18,

@@ -134,7 +134,12 @@ export const MobileBottomNav: React.FC = () => {
             style={styles.tabItem}
             onPress={() => {
               if (!isActive) {
-                router.replace(tab.route as any);
+                // Use push for seller tabs so back navigation works correctly
+                if (pathname.startsWith('/seller')) {
+                  router.push(tab.route as any);
+                } else {
+                  router.replace(tab.route as any);
+                }
               }
             }}
           >
