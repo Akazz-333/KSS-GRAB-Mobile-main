@@ -140,7 +140,7 @@ export async function fetchDirectFromSupabase<T>(path: string): Promise<T | null
     } else if (route === 'categories' || route === 'categories/') {
       endpoint = `${SUPABASE_REST_URL}/categories?select=*&order=name`;
     } else if (route === 'orders' || route === 'orders/' || route === 'store/orders' || route === 'seller/orders' || route.startsWith('orders/user/') || route.startsWith('delivery/')) {
-      endpoint = `${SUPABASE_REST_URL}/orders?select=*,profiles!orders_customer_id_fkey(id,full_name,phone)&status=in.(delivered,completed)&order=created_at.desc&limit=100`;
+      endpoint = `${SUPABASE_REST_URL}/orders?select=*,profiles!orders_customer_id_fkey(id,full_name,phone)&order=created_at.desc&limit=100`;
     } else if (route === 'seller/profile' || route === 'seller/profile/') {
       return {
         store_name: 'GrabIt SuperMart (Indiranagar)',

@@ -263,6 +263,37 @@ export default function SellerOrdersScreen() {
     }
   };
 
+  const syncCustomerLocalOrders = async (targetOrder: Order, newStatusStr: string) => {
+    try {
+      const rawCustPhone = String(targetOrder.customer_phone || (targetOrder as any).phone || '').replace(/\D/g, '');
+      const custPhoneDigits = rawCustPhone.length >= 10 ? rawCustPhone.slice(-10) : rawCustPhone;
+      const keys = ['grabit_orders_guest'];
+      if (custPhoneDigits) keys.unshift(`grabit_orders_${custPhoneDigits}`);
+
+      for (const k of keys) {
+        const list = await getItem<any[]>(k).catch(() => []);
+        if (Array.isArray(list) && list.length > 0) {
+          let modified = false;
+          const updated = list.map((item) => {
+            if (isSameOrderId(item, targetOrder)) {
+              modified = true;
+              return {
+                ...item,
+                status: newStatusStr.toLowerCase(),
+                ...(targetOrder.rider_name ? { delivery_agent_name: targetOrder.rider_name, rider_name: targetOrder.rider_name } : {}),
+                ...(targetOrder.rider_phone ? { delivery_agent_phone: targetOrder.rider_phone, rider_phone: targetOrder.rider_phone } : {}),
+              };
+            }
+            return item;
+          });
+          if (modified) {
+            await setItem(k, updated).catch(() => {});
+          }
+        }
+      }
+    } catch {}
+  };
+
   const handleUpdateStatus = async (order: Order, newStatus: Order['status']) => {
     const displayOrderId = formatDisplayOrderId(order);
     const backendOrderId = order.rawId || order.id;
@@ -297,6 +328,8 @@ export default function SellerOrdersScreen() {
       setItem('grabit_seller_orders', updated).catch(() => {});
       return updated;
     });
+
+    syncCustomerLocalOrders(order, newStatus);
 
     try {
       await patch(`/orders/${encodeURIComponent(backendOrderId)}/status`, {
@@ -360,6 +393,7 @@ export default function SellerOrdersScreen() {
       setItem('grabit_seller_orders', updated).catch(() => {});
       return updated;
     });
+    syncCustomerLocalOrders({ ...order, rider_name: rider.name, rider_phone: rider.phone }, nextStatus);
     setSelectedReassignOrder(null);
     showToast(`Order #${formatDisplayOrderId(order)} assigned to ${rider.name}`, 'success');
 
@@ -417,6 +451,8 @@ export default function SellerOrdersScreen() {
       setItem('grabit_seller_orders', updated).catch(() => {});
       return updated;
     });
+
+    syncCustomerLocalOrders(order, 'OUT_FOR_DELIVERY');
 
     try {
       await post(`/orders/${encodeURIComponent(backendOrderId)}/assign`, {
